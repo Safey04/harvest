@@ -322,6 +322,8 @@ class HarvestOptimizer:
             if harvest_df.empty:
                 logger.warning(f"No harvest possible on {current_date.date()}")
             else:
+
+                harvest_df = harvest_df[harvest_df['harvest_stock'] >= 1950]
                 
                 df = self.solution_processor.update_stock_after_harvest_market(df, harvest_df)
 
@@ -339,8 +341,6 @@ class HarvestOptimizer:
                         required_cols = {'farm', 'house', 'date', 'expected_stock'}
                         if required_cols.issubset(cols_present):
                             extra_df = small_candidates[['farm', 'house', 'date', 'expected_stock']].copy()
-                            extra_df.to_csv(f"extra_df_{current_date.date()}.csv", index=False)
-
                             # Use avg_weight if available to compute net_meat
                             if 'avg_weight' in small_candidates.columns:
                                 extra_df['avg_weight'] = small_candidates['avg_weight'].values
@@ -355,7 +355,6 @@ class HarvestOptimizer:
                             extra_df['net_meat'] = extra_df['harvest_stock'] * extra_df['avg_weight']
                             extra_df = extra_df[['farm', 'house', 'date', 'harvest_type', 'harvest_stock', 'expected_stock', 'avg_weight', 'net_meat']]
                             df = self.solution_processor.update_stock_after_harvest_market(df, extra_df)
-                            extra_df.to_csv(f"extra_df_{current_date.date()}.csv", index=False)
                             harvest_df = pd.concat([harvest_df, extra_df], ignore_index=True)
             
                 all_harvests.append(harvest_df)
@@ -621,7 +620,7 @@ class PoultryHarvestOptimizationService:
             
             # Get best slaughterhouse plan
             best_sh_date, best_sh_plan, best_sh_updated, sh_summary = self.optimizer.get_best_net_meat_plan(sh_results)
-            best_sh_updated.to_csv(f"best_sh_updated.csv", index=False)
+    
 
             
             # Export slaughterhouse summary        
@@ -772,7 +771,7 @@ class PoultryHarvestOptimizationService:
         if not culls_plan.empty:
             combined_harvest_plans.append(culls_plan)
         
-        combined_full_harvest_plan = pd.concat(combined_harvest_plans, ignore_index=True) if combined_harvest_plans else pd.DataFrame()
+        combined_full_harvest_plan = pd.concat(combined_harvest_plans, ignore_index=True).drop_duplicates(subset=['farm', 'house', 'date', 'age','harvest_type','harvest_stock']) if combined_harvest_plans else pd.DataFrame()
         
         # Step 9.6: Create age expansion harvest plan (base + age expansion market harvest)
         age_expansion_harvest_plans = []
@@ -783,7 +782,7 @@ class PoultryHarvestOptimizationService:
         if not culls_plan.empty:
             age_expansion_harvest_plans.append(culls_plan)
         
-        age_expansion_full_harvest_plan = pd.concat(age_expansion_harvest_plans, ignore_index=True) if age_expansion_harvest_plans else pd.DataFrame()
+        age_expansion_full_harvest_plan = pd.concat(age_expansion_harvest_plans, ignore_index=True).drop_duplicates(subset=['farm', 'house', 'date', 'age','harvest_type','harvest_stock']) if age_expansion_harvest_plans else pd.DataFrame()
         
         # Step 10: Export CSV files AFTER recursive optimization (recursive results only)
         recursive_output_dir = f"harvest_results/{output_dir}_capacity_increased"
@@ -1009,7 +1008,6 @@ class PoultryHarvestOptimizationService:
                 expanded_max_weight, 
                 'Market'
             )
-            expanded_flagged_stock.to_csv("expanded_flagged_stock.csv", index=False)
             
             # Filter to only ready stock
             ready_expanded_stock = expanded_flagged_stock[expanded_flagged_stock['ready_Market'] == 1].copy()
@@ -1061,11 +1059,7 @@ class PoultryHarvestOptimizationService:
             daily_df_full['existing_allocation'] = daily_df_full['existing_allocation'].fillna(0)
             # Base remaining capacity
             daily_df_full['remaining_capacity'] = self.market_config.max_stock - daily_df_full['existing_allocation']
-            # If prior allocations meet/exceed the daily max, allow extra 20,000 to reach 120,000 total
-            daily_df_full.loc[
-                daily_df_full['existing_allocation'] >= self.market_config.max_stock,
-                'remaining_capacity'
-            ] = 20000
+
             # Prevent negatives
             daily_df_full['remaining_capacity'] = daily_df_full['remaining_capacity'].clip(lower=0)
 
@@ -1125,9 +1119,10 @@ class PoultryHarvestOptimizationService:
         output_dir: str,
         concat: bool = True,
         combined: bool = False
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, int]:
         """
         Run recursive market optimization on unharvested stock.
+        Increases capacity incrementally until no unharvested stock remains.
         
         Args:
             initial_market_harvest: Initial market harvest results
@@ -1135,14 +1130,14 @@ class PoultryHarvestOptimizationService:
             output_dir: Output directory for intermediate exports
             
         Returns:
-            Tuple of (combined market harvest, final unharvested stock)
+            Tuple of (final market harvest, final unharvested stock, iteration count)
         """
         logger.info("Checking for recursive market optimization...")
         
         # Check if we need to run recursive optimization
         if unharvested_stock.empty:
             logger.info("No unharvested stock - skipping recursive optimization")
-            return initial_market_harvest, unharvested_stock
+            return initial_market_harvest, unharvested_stock, 0
         
         # Count unique farm-house combinations in unharvested stock
         unharvested_stock['farm_house_key'] = (
@@ -1155,28 +1150,28 @@ class PoultryHarvestOptimizationService:
         logger.info(f"Unharvested stock analysis: {unique_farm_houses} unique farm-houses, {total_unharvested_stock} total stock")
         
         if total_unharvested_stock <= 10:
-            logger.info("Total unharvested stock <= 20000 - no recursive optimization needed")
-            return initial_market_harvest, unharvested_stock
+            logger.info("Total unharvested stock <= 10 - no recursive optimization needed")
+            return initial_market_harvest, unharvested_stock, 0
         
-        
-        # Start recursive optimization
-        all_additional_harvests = []
+        # Start recursive optimization with incremental capacity increase
         current_unharvested = unharvested_stock.copy()
-        current_max_stock = 0.2 * self.market_config.max_stock
         starting_max_stock = self.market_config.max_stock
+        capacity_multiplier = 0.1
         iteration = 1
+        max_iterations = 20  # Increased to allow for more capacity increments
         
-        logger.info(f"Starting recursive market optimization with initial max_stock={current_max_stock}")
+        logger.info(f"Starting recursive market optimization with incremental capacity increase")
         
-        while True:
-            logger.info(f"Recursive optimization iteration {iteration}, max_stock={current_max_stock}")
+        while iteration <= max_iterations:
+            current_max_stock = capacity_multiplier * starting_max_stock
+            logger.info(f"Recursive optimization iteration {iteration}, capacity_multiplier={capacity_multiplier:.1f}, max_stock={current_max_stock}")
             
             # Check total remaining unharvested stock
             remaining_stock = current_unharvested.drop_duplicates(subset=['farm', 'house'])['expected_stock'].sum()
             logger.info(f"Remaining unharvested stock: {remaining_stock}")
             
             if remaining_stock <= 10:
-                logger.info("Remaining unharvested stock <= 10000 - stopping recursive optimization")
+                logger.info("Remaining unharvested stock <= 10 - stopping recursive optimization")
                 break
             
             # Update market config for this iteration
@@ -1203,56 +1198,51 @@ class PoultryHarvestOptimizationService:
             )
             
             best_date, additional_harvest, updated_unharvested, _ = self.optimizer.get_best_net_meat_plan(results_by_start_day)
-
-            # updated_unharvested.to_csv(f"updated_unharvested_{iteration}.csv", index=False)
             
             if additional_harvest is None or additional_harvest.empty:
-                logger.info(f"No additional harvest found in iteration {iteration} - increasing max_stock")
-                current_pct = iteration * 0.2
-                current_max_stock = current_pct * starting_max_stock 
+                logger.info(f"No additional harvest found in iteration {iteration} - increasing capacity")
+                capacity_multiplier += 0.1
                 iteration += 1
-                
-                # Prevent infinite loop - stop after reasonable number of iterations
-                if iteration > 6:
-                    logger.warning("Reached maximum recursive optimization iterations - stopping")
-                    break
                 continue
             
-            # Add to accumulated harvests
-            additional_harvest['iteration'] = iteration
-            all_additional_harvests.append(additional_harvest)
-            
-            current_unharvested = updated_unharvested
-            
-            logger.info(f"Iteration {iteration} harvested {additional_harvest['harvest_stock'].sum()} stock")
-            
-            # Increase max_stock for next iteration
-            current_pct = iteration * 0.2
-            current_max_stock = current_pct * starting_max_stock
-            iteration += 1
-            
-            # Prevent infinite loop
-            if iteration > 6:
-                logger.warning("Reached maximum recursive optimization iterations - stopping")
+            # Check if this iteration successfully harvested all remaining stock
+            new_remaining_stock = updated_unharvested.drop_duplicates(subset=['farm', 'house'])['expected_stock'].sum()
+            if new_remaining_stock <= 10:
+                logger.info(f"Successfully harvested all stock in iteration {iteration} with capacity_multiplier={capacity_multiplier:.1f}")
+                # Use only this final successful harvest, discard all previous attempts
+                final_harvest = additional_harvest.copy()
+                final_harvest['iteration'] = iteration
+                final_harvest['capacity_multiplier'] = capacity_multiplier
+                current_unharvested = updated_unharvested
                 break
-        
-        # Combine all market harvests
-        combined_market_harvest = initial_market_harvest.copy()
-        
-        if all_additional_harvests:
-            additional_combined = pd.concat(all_additional_harvests, ignore_index=True)
-            logger.info(f"Total additional harvest from recursive optimization: {additional_combined['harvest_stock'].sum()} stock")
-            
-            if not initial_market_harvest.empty and concat == True:
-                initial_market_harvest['iteration'] = 0
-                combined_market_harvest = pd.concat([initial_market_harvest, additional_combined], ignore_index=True)
             else:
-                combined_market_harvest = additional_combined
-        else:
-            logger.info("No additional harvest from recursive optimization")
+                logger.info(f"Iteration {iteration} harvested {additional_harvest['harvest_stock'].sum()} stock, but {new_remaining_stock} remains - increasing capacity")
+                capacity_multiplier += 0.1
+                iteration += 1
+                continue
         
-        logger.info(f"Recursive market optimization completed after {iteration-1} iterations")
-        return combined_market_harvest, current_unharvested, iteration-1
+        if iteration > max_iterations:
+            logger.warning(f"Reached maximum iterations ({max_iterations}) - using last available harvest")
+            # If we hit max iterations, use the last successful harvest
+            if 'final_harvest' not in locals():
+                final_harvest = pd.DataFrame()
+        
+        # Ensure final_harvest is defined
+        if 'final_harvest' not in locals():
+            final_harvest = pd.DataFrame()
+        
+        # Combine with initial harvest if requested
+        if concat and not initial_market_harvest.empty and not final_harvest.empty:
+            initial_market_harvest['iteration'] = 0
+            initial_market_harvest['capacity_multiplier'] = 1.0
+            combined_market_harvest = pd.concat([initial_market_harvest, final_harvest], ignore_index=True)
+        elif not final_harvest.empty:
+            combined_market_harvest = final_harvest
+        else:
+            combined_market_harvest = initial_market_harvest
+        
+        logger.info(f"Recursive market optimization completed after {iteration} iterations with final capacity_multiplier={capacity_multiplier:.1f}")
+        return combined_market_harvest, current_unharvested, iteration
     
     
     def _run_combined_market_optimization(
@@ -1358,7 +1348,6 @@ class PoultryHarvestOptimizationService:
                 expanded_max_weight, 
                 'Market'
             )
-            expanded_flagged_stock.to_csv("expanded_flagged_stock.csv", index=False)
             
             # Filter to only ready stock
             ready_expanded_stock = expanded_flagged_stock[expanded_flagged_stock['ready_Market'] == 1].copy()
@@ -1512,7 +1501,6 @@ class PoultryHarvestOptimizationService:
         # Initialize tracking variables
         cumulative_harvest = pd.concat([initial_market_harvest, best_sh_plan], ignore_index=True)
         current_unharvested = unharvested_stock.copy()
-        current_unharvested.to_csv(f"current_unharvested_0.csv", index=False)
         base_max_date = cumulative_harvest['date'].max()
         
         # Get unique farm-house combinations from unharvested stock
@@ -1523,7 +1511,6 @@ class PoultryHarvestOptimizationService:
             logger.info(f"Running iteration {expansion_day}: expanding max_harvest_age by +{expansion_day} days")
 
             
-            current_unharvested.to_csv(f"current_unharvested_{expansion_day}.csv", index=False)
             # Create age-expanded dataset for this iteration
             df_age_expanded = self._create_age_expanded_data(
                 removed_df, unharvested_farm_houses, expansion_day, cumulative_harvest
@@ -1566,9 +1553,8 @@ class PoultryHarvestOptimizationService:
                 ready_stock, valid_days, expansion_day, output_dir
             )
             
-            
             if best_harvest_df is not None and not best_harvest_df.empty:
-                cumulative_harvest = pd.concat([cumulative_harvest[cumulative_harvest['harvest_type'] == 'Market'], best_harvest_df], ignore_index=True)
+                cumulative_harvest = pd.concat([cumulative_harvest, best_harvest_df], ignore_index=True)
                 current_unharvested = best_updated_df.copy()
                 logger.info(f"Iteration {expansion_day}: Added {best_harvest_df['harvest_stock'].sum()} stock")
             else:
@@ -1677,14 +1663,10 @@ class PoultryHarvestOptimizationService:
         output_dir: str
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Run market optimization for a specific iteration."""
-        
-        # Filter stock to valid days only
-        # filtered_stock = combined_stock[combined_stock['date'].isin(valid_days['date'])].copy()
-        
 
-        
+
         # Run market optimization
-        results_by_start_day, _ = self.optimizer.run_market_reverse_sweep(
+        results_by_start_day, _ = self.optimizer.run_iterative_market_harvest(
             df_input=combined_stock,
             max_total_stock=self.market_config.max_stock,
             min_total_stock=self.market_config.min_stock,
