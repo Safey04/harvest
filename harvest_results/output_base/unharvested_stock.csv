@@ -1,0 +1,123 @@
+farm,date,house,age,expected_mortality,expected_stock,expected_mortality_rate,avg_weight,farm_house_key,ready_Market,unharvested_reason
+W03,2025-05-17,H09,37,130,26732,0.004440497,1.965421315,W03_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W03,2025-05-18,H09,38,73,26659,0.002499743,2.02256791,W03_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W03,2025-05-15,H11,35,400,20598,0.014255676,1.94980695,W03_H11,1.0,Exceeded Capacity & not optimal Average Weight
+W03,2025-05-17,H11,37,177,20310,0.006373555,2.002240189,W03_H11,1.0,Exceeded Capacity & not optimal Average Weight
+W03,2025-05-18,H11,38,70,20240,0.002526985,2.060883863,W03_H11,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-07,H07,32,48,16340,0.001662223,1.944417344,W04_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-08,H07,33,40,16300,0.001387107,2.02302168,W04_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-10,H07,35,46,16214,0.001599944,2.174903723,W04_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-07,H08,31,68,22187,0.002519078,1.917893556,W04_H08,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-08,H08,32,50,22137,0.001855701,1.993858075,W04_H08,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-10,H08,34,40,22067,0.001488427,2.145787113,W04_H08,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-07,H09,32,40,24268,0.001356116,1.932070431,W04_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-08,H09,33,36,24232,0.001221996,2.008075889,W04_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-10,H09,35,36,24167,0.001224698,2.160086807,W04_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-07,H10,32,35,26518,0.001175878,1.977956298,W04_H10,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-08,H10,33,32,26486,0.001076245,2.059945373,W04_H10,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-07,H11,32,39,24211,0.001325313,1.938257124,W04_H11,1.0,Exceeded Capacity & not optimal Average Weight
+W04,2025-05-08,H11,33,35,24176,0.0011908,2.020321405,W04_H11,1.0,Exceeded Capacity & not optimal Average Weight
+W05,2025-05-06,H11,34,46,24124,0.001650876,1.95671719,W05_H11,1.0,Exceeded Capacity & not optimal Average Weight
+W05,2025-05-07,H11,35,55,24069,0.001977777,2.022836722,W05_H11,1.0,Exceeded Capacity & not optimal Average Weight
+W05,2025-05-08,H11,36,88,23981,0.003174489,2.088956254,W05_H11,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-13,H02,32,15,6413,0.000520183,1.932295488,W08_H02,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-14,H02,33,100,6313,0.003479955,2.008608749,W08_H02,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-15,H02,34,250,6063,0.008776241,2.08492201,W08_H02,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-13,H03,32,10,20232,0.000339363,1.930201342,W08_H03,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-14,H03,33,40,20192,0.001359296,2.02147651,W08_H03,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-15,H03,34,44,20148,0.001497465,2.112751678,W08_H03,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-13,H04,32,15,26381,0.000519805,1.914193141,W08_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-14,H04,33,80,26301,0.002779998,1.993698962,W08_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-15,H04,34,70,26231,0.00243843,2.073204784,W08_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-13,H05,32,20,26464,0.000690846,1.910613011,W08_H05,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-14,H05,33,30,26434,0.001037344,1.990567404,W08_H05,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-15,H05,34,110,26324,0.003818119,2.070521797,W08_H05,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-13,H06,32,11,26408,0.00038082,1.931591158,W08_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-14,H06,33,20,26388,0.000692881,2.015094517,W08_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W08,2025-05-15,H06,34,30,26358,0.001040402,2.098597876,W08_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-05,H01,31,13,27410,0.000422737,1.904539548,W10_H01,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-06,H01,32,15,27395,0.000488011,2.00105273,W10_H01,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-07,H01,33,25,27370,0.000814014,2.097565913,W10_H01,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-06,H02,32,22,27782,0.000705694,1.96372776,W10_H02,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-07,H02,33,53,27729,0.001702975,2.0471597,W10_H02,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-08,H02,34,57,27672,0.001834862,1.995955797,W10_H02,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-10,H02,36,0,27672,0.0,2.125007299,W10_H02,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-05,H03,31,17,27201,0.000557012,1.902033396,W10_H03,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-06,H03,32,18,27183,0.000590125,1.994377862,W10_H03,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-07,H03,33,28,27155,0.000918816,2.086722327,W10_H03,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-05,H04,31,27,27840,0.00086436,1.903465662,W10_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-06,H04,32,25,27815,0.000800974,1.987954216,W10_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-07,H04,33,62,27753,0.001990369,2.07244277,W10_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-08,H04,34,68,27685,0.002187761,2.015552156,W10_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-10,H04,36,14,27671,0.000450624,2.14620956,W10_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-06,H07,32,26,3226,0.000849368,1.966490266,W10_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-07,H07,33,22,3204,0.000719213,2.056671707,W10_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-08,H07,34,29,3175,0.000948953,2.146853147,W10_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W10,2025-05-10,H07,36,16,3126,0.000524401,2.135918083,W10_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W12,2025-05-17,H06,33,204,15928,0.006998765,2.04948946,W12_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W12,2025-05-18,H06,34,240,15688,0.0083022,2.134387352,W12_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W12,2025-05-24,H07,38,5,26638,0.000169676,1.954243734,W12_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W12,2025-05-25,H07,39,5,26633,0.000169704,2.008976664,W12_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W12,2025-05-26,H07,40,0,26633,0.0,2.063709594,W12_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W12,2025-05-17,H12,33,42,24326,0.001471,2.048334668,W12_H12,1.0,Exceeded Capacity & not optimal Average Weight
+W12,2025-05-18,H12,34,95,24231,0.00333837,2.135001602,W12_H12,1.0,Exceeded Capacity & not optimal Average Weight
+W13,2025-05-20,H12,34,140,26165,0.00472957,1.952037152,W13_H12,1.0,Exceeded Capacity & not optimal Average Weight
+W13,2025-05-21,H12,35,119,26046,0.004036361,2.039202689,W13_H12,1.0,Exceeded Capacity & not optimal Average Weight
+W13,2025-05-22,H12,36,133,25913,0.004531671,2.126368226,W13_H12,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-21,H03,31,66,28550,0.002091255,1.925251338,W17_H03,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-22,H03,32,55,28495,0.001745755,2.031712623,W17_H03,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-22,H04,33,160,26419,0.005465227,1.944510162,W17_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-24,H04,35,145,26169,0.004995521,2.07281374,W17_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-25,H04,36,71,26098,0.002452081,2.136965529,W17_H04,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-24,H06,34,60,28350,0.001911193,1.921969307,W17_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-25,H06,35,73,28277,0.002330705,1.977804099,W17_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-26,H06,36,38,28239,0.001214717,2.033638892,W17_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-22,H07,32,65,20661,0.002844514,1.921973978,W17_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-24,H07,34,88,20506,0.003877335,2.075460967,W17_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-25,H07,35,76,20430,0.003359859,2.152204461,W17_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-24,H08,33,42,27777,0.001351612,1.907284027,W17_H08,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-25,H08,34,67,27710,0.002160802,2.0085,W17_H08,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-22,H09,32,55,15495,0.002405423,1.907928638,W17_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-24,H09,34,66,15367,0.002902758,2.074392956,W17_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-25,H09,35,82,15285,0.00361951,2.157625116,W17_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-24,H12,33,117,23351,0.00374376,2.012082469,W17_H12,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-25,H12,34,105,23246,0.003371111,2.097979798,W17_H12,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-25,H01,32,57,19636,0.002593503,1.937772056,W20_H01,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-26,H01,33,60,19576,0.002737476,2.01471507,W20_H01,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-25,H02,32,60,26874,0.001995278,1.957709983,W20_H02,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-26,H02,33,65,26809,0.002166233,2.049637479,W20_H02,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-25,H05,32,60,17387,0.002773412,1.994469136,W20_H05,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-26,H05,33,65,17322,0.003013584,2.092592593,W20_H05,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-25,H06,32,75,26912,0.002489792,1.968526834,W20_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-26,H06,33,80,26832,0.00266285,2.063158542,W20_H06,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-25,H07,32,90,27089,0.002968338,1.930079956,W20_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-26,H07,33,85,27004,0.002811311,2.012599945,W20_H07,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-24,H09,31,104,24768,0.003750316,1.9,W20_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-25,H09,32,110,24658,0.003982477,1.971676301,W20_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W20,2025-05-26,H09,33,100,24558,0.003633589,2.043352601,W20_H09,1.0,Exceeded Capacity & not optimal Average Weight
+W17,2025-05-19 00:00:00,H10,28,75,31200,0.002403846,1.455,W17H10,,Did not meet Minimum Average Weight Constraint
+W17,2025-05-20 00:00:00,H10,29,81,31119,0.002602911,1.541666667,W17H10,,Did not meet Minimum Average Weight Constraint
+W17,2025-05-21 00:00:00,H10,30,110,31009,0.003547357,1.616053922,W17H10,,Did not meet Minimum Average Weight Constraint
+W17,2025-05-22 00:00:00,H10,31,94,30915,0.003040595,1.690441176,W17H10,,Did not meet Minimum Average Weight Constraint
+W17,2025-05-23 00:00:00,H10,32,110,30805,0.003570849,1.764828431,W17H10,,Did not meet Minimum Average Weight Constraint
+W17,2025-05-24 00:00:00,H10,33,92,30713,0.002995474,1.839215686,W17H10,,Did not meet Minimum Average Weight Constraint
+W17,2025-05-25 00:00:00,H10,34,15,30698,0.000488631,1.792027498,W17H10,,Did not meet Minimum Average Weight Constraint
+W17,2025-05-26 00:00:00,H10,35,10,30688,0.00032586,1.850592357,W17H10,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-21 00:00:00,H03,28,55,22170,0.00248083,1.53,W20H03,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-22 00:00:00,H03,29,60,22110,0.002713704,1.662857143,W20H03,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-23 00:00:00,H03,30,62,22048,0.002812046,1.795714286,W20H03,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-24 00:00:00,H03,31,33,22015,0.001498978,1.708641881,W20H03,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-25 00:00:00,H03,32,30,21985,0.001364567,1.769408199,W20H03,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-26 00:00:00,H03,33,35,21950,0.001594533,1.830174516,W20H03,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-21 00:00:00,H04,28,60,30446,0.001970702,1.6,W20H04,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-22 00:00:00,H04,29,70,30376,0.002304451,1.692156863,W20H04,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-23 00:00:00,H04,30,95,30281,0.003137281,1.784313725,W20H04,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-24 00:00:00,H04,31,91,30190,0.003014243,1.876470588,W20H04,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-25 00:00:00,H04,32,100,30090,0.003323363,1.812574836,W20H04,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-26 00:00:00,H04,33,110,29980,0.003669113,1.875085707,W20H04,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-21 00:00:00,H11,28,100,28045,0.003565698,1.6,W20H11,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-22 00:00:00,H11,29,150,27895,0.005377308,1.657142857,W20H11,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-23 00:00:00,H11,30,90,27805,0.003236828,1.714285714,W20H11,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-24 00:00:00,H11,31,92,27713,0.003319742,1.771428571,W20H11,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-25 00:00:00,H11,32,80,27633,0.002895089,1.828571429,W20H11,,Did not meet Minimum Average Weight Constraint
+W20,2025-05-26 00:00:00,H11,33,70,27563,0.002539636,1.885714286,W20H11,,Did not meet Minimum Average Weight Constraint
