@@ -356,6 +356,28 @@ class HarvestOptimizer:
                             extra_df = extra_df[['farm', 'house', 'date', 'harvest_type', 'harvest_stock', 'expected_stock', 'avg_weight', 'net_meat']]
                             df = self.solution_processor.update_stock_after_harvest_market(df, extra_df)
                             harvest_df = pd.concat([harvest_df, extra_df], ignore_index=True)
+
+                            # Consolidate duplicate allocations for the same farm-house-date-harvest_type
+                            group_keys = ['farm', 'house', 'date', 'harvest_type']
+                            if set(group_keys).issubset(harvest_df.columns):
+                                numeric_cols = [c for c in ['harvest_stock', 'net_meat'] if c in harvest_df.columns]
+                                keep_cols = [c for c in harvest_df.columns if c not in numeric_cols]
+                                # Compute weighted avg_weight if present
+                                def _aggregate_group(g):
+                                    out = g.iloc[0][keep_cols].copy()
+                                    total_stock = g['harvest_stock'].sum() if 'harvest_stock' in g.columns else 0
+                                    out['harvest_stock'] = total_stock
+                                    if 'avg_weight' in g.columns and 'harvest_stock' in g.columns and total_stock > 0:
+                                        weighted_avg = (g['avg_weight'] * g['harvest_stock']).sum() / total_stock
+                                        out['avg_weight'] = weighted_avg
+                                        out['net_meat'] = total_stock * weighted_avg
+                                    elif 'net_meat' in g.columns:
+                                        out['net_meat'] = g['net_meat'].sum()
+                                    return out
+                                harvest_df = (harvest_df
+                                    .groupby(group_keys, as_index=False)
+                                    .apply(_aggregate_group)
+                                    .reset_index(drop=True))
             
                 all_harvests.append(harvest_df)
             
@@ -657,13 +679,13 @@ class PoultryHarvestOptimizationService:
             M_best_date, market_harvest, market_updated, _ = self.optimizer.get_best_net_meat_plan(results_by_start_day_M)
 
             unique_pairs = ready_df[['farm', 'house']].drop_duplicates()
-            sh_harvested_pairs = best_sh_plan[['farm', 'house']].drop_duplicates()
+            
             market_updated_pairs = market_updated[['farm', 'house']].drop_duplicates()
             market_harvest_pairs = market_harvest[['farm', 'house']].drop_duplicates()
             
             # Find farm-house pairs that are in ready_df but NOT in either sh_harvested_pairs OR market_updated_pairs
             # First, combine both harvested datasets
-            all_harvested_pairs = pd.concat([sh_harvested_pairs, market_updated_pairs, market_harvest_pairs]).drop_duplicates()
+            all_harvested_pairs = pd.concat([market_updated_pairs, market_harvest_pairs]).drop_duplicates()
 
             
             # Perform anti-join to get pairs in ready_df but not in any harvested data
@@ -691,7 +713,7 @@ class PoultryHarvestOptimizationService:
 
                 
         # Step 6: Export CSV files BEFORE recursive optimization
-        pre_recursive_exporter = HarvestPlanExporter(f"harvest_results/{output_dir}_base")
+        pre_recursive_exporter = HarvestPlanExporter(f"harvest_results/{output_dir}_base", "base")
         pre_recursive_harvest_plans = []
         if not best_sh_plan.empty:
             pre_recursive_harvest_plans.append(best_sh_plan)
@@ -716,6 +738,12 @@ class PoultryHarvestOptimizationService:
         
         
         if self.market_config is not None:
+
+            # Run age expansion optimization for unharvested stock (+3 days max_harvest_age)
+            age_expansion_market_harvest, age_expansion_updated_stock = self._run_unharvested_age_expansion_market_optimization(
+                age_expansion_updated_stock_initial, age_expansion_unharvested, best_sh_plan, removed_df, culls_plan, output_dir
+            )
+
             # Run recursive optimization (separate from expanded)
             recursive_market_harvest, recursive_updated_stock, _ = self._run_recursive_market_optimization(
                 recursive_updated_stock_initial, recursive_unharvested, output_dir
@@ -731,10 +759,6 @@ class PoultryHarvestOptimizationService:
                 combined_updated_stock_initial, combined_unharvested,  combined_sh_plan, culls_plan, removed_df, output_dir
             )
 
-            # Run age expansion optimization for unharvested stock (+3 days max_harvest_age)
-            age_expansion_market_harvest, age_expansion_updated_stock = self._run_unharvested_age_expansion_market_optimization(
-                age_expansion_updated_stock_initial, age_expansion_unharvested, best_sh_plan, removed_df, culls_plan, output_dir
-            )
         
         # Step 8: Create recursive-only harvest plan (base + recursive)
         recursive_harvest_plans = []
@@ -786,7 +810,7 @@ class PoultryHarvestOptimizationService:
         
         # Step 10: Export CSV files AFTER recursive optimization (recursive results only)
         recursive_output_dir = f"harvest_results/{output_dir}_capacity_increased"
-        recursive_exporter = HarvestPlanExporter(recursive_output_dir)
+        recursive_exporter = HarvestPlanExporter(recursive_output_dir, "capacity_increased")
         recursive_files = recursive_exporter.generate_harvest_plan_csvs(
             harvest_df=recursive_full_harvest_plan,
             unharvested_df=recursive_updated_stock,
@@ -800,7 +824,7 @@ class PoultryHarvestOptimizationService:
         
         # Step 11: Export CSV files AFTER expanded optimization (expanded results only)
         expanded_output_dir = f"harvest_results/{output_dir}_weight_expanded"
-        expanded_exporter = HarvestPlanExporter(expanded_output_dir)
+        expanded_exporter = HarvestPlanExporter(expanded_output_dir, "weight_expanded")
         expanded_files = expanded_exporter.generate_harvest_plan_csvs(
             harvest_df=expanded_full_harvest_plan,
             unharvested_df=expanded_updated_stock,
@@ -814,7 +838,7 @@ class PoultryHarvestOptimizationService:
         
         # Step 12: Export CSV files for combined optimization (combined results)
         combined_output_dir = f"harvest_results/{output_dir}_combined"
-        combined_exporter = HarvestPlanExporter(combined_output_dir)
+        combined_exporter = HarvestPlanExporter(combined_output_dir, "combined")
         combined_files = combined_exporter.generate_harvest_plan_csvs(
             harvest_df=combined_full_harvest_plan,
             unharvested_df=combined_updated_stock,
@@ -828,7 +852,7 @@ class PoultryHarvestOptimizationService:
         
         # Step 13: Export CSV files for age expansion optimization (age expansion results)
         age_expansion_output_dir = f"harvest_results/{output_dir}_age_expansion"
-        age_expansion_exporter = HarvestPlanExporter(age_expansion_output_dir)
+        age_expansion_exporter = HarvestPlanExporter(age_expansion_output_dir, "age_expansion")
         age_expansion_files = age_expansion_exporter.generate_harvest_plan_csvs(
             harvest_df=age_expansion_full_harvest_plan,
             unharvested_df=age_expansion_updated_stock,
@@ -968,9 +992,9 @@ class PoultryHarvestOptimizationService:
             if sh_harvest is not None and not sh_harvest.empty:
                 all_allocated_harvests.append(sh_harvest[['farm', 'house', 'harvest_stock']])
             
-            # Add culls harvest if it exists
-            if culls_harvest is not None and not culls_harvest.empty:
-                all_allocated_harvests.append(culls_harvest[['farm', 'house', 'harvest_stock']])
+            # # Add culls harvest if it exists
+            # if culls_harvest is not None and not culls_harvest.empty:
+            #     all_allocated_harvests.append(culls_harvest[['farm', 'house', 'harvest_stock']])
             
             # Add initial market harvest if it exists
             if not initial_market_harvest.empty:
@@ -1502,15 +1526,14 @@ class PoultryHarvestOptimizationService:
         cumulative_harvest = pd.concat([initial_market_harvest, best_sh_plan], ignore_index=True)
         current_unharvested = unharvested_stock.copy()
         base_max_date = cumulative_harvest['date'].max()
-        
-        # Get unique farm-house combinations from unharvested stock
-        unharvested_farm_houses = current_unharvested[['farm', 'house']].drop_duplicates()
+    
 
         # Sequential age expansion - Fixed range to include all days
         for expansion_day in range(1, age_expansion_days + 1):
             logger.info(f"Running iteration {expansion_day}: expanding max_harvest_age by +{expansion_day} days")
 
-            
+            unharvested_farm_houses = current_unharvested[['farm', 'house']].drop_duplicates()
+
             # Create age-expanded dataset for this iteration
             df_age_expanded = self._create_age_expanded_data(
                 removed_df, unharvested_farm_houses, expansion_day, cumulative_harvest
@@ -1664,9 +1687,13 @@ class PoultryHarvestOptimizationService:
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Run market optimization for a specific iteration."""
 
+        combined_stock.to_csv(f"{output_dir}/combined_stock_{expansion_day}.csv", index=False)
+
+        combined_stock = combined_stock.drop_duplicates(subset=['farm', 'house', 'date'])
+
 
         # Run market optimization
-        results_by_start_day, _ = self.optimizer.run_iterative_market_harvest(
+        results_by_start_day, _ = self.optimizer.run_market_reverse_sweep(
             df_input=combined_stock,
             max_total_stock=self.market_config.max_stock,
             min_total_stock=self.market_config.min_stock,
@@ -1680,6 +1707,10 @@ class PoultryHarvestOptimizationService:
         )
 
         best_date, best_harvest_df, best_updated_df, _ = self.optimizer.get_best_net_meat_plan(results_by_start_day)
+
+        best_harvest_df.to_csv(f"{output_dir}/best_harvest_df_{expansion_day}.csv", index=False)
+        best_updated_df.to_csv(f"{output_dir}/best_updated_df_{expansion_day}.csv", index=False)
+
         
         if best_harvest_df is not None and not best_harvest_df.empty:
             # Add iteration tracking

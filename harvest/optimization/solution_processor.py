@@ -108,6 +108,7 @@ class SolutionProcessor:
                     'expected_stock': row['expected_stock'],
                     'expected_mortality_rate': row['expected_mortality_rate'],
                     'avg_weight': row['avg_weight'],
+                    'selected': 1,
                     'harvest_stock': harvested,
                     'net_meat': harvested * row['avg_weight'],
                     'harvest_type': harvest_type,
@@ -241,7 +242,7 @@ class SolutionProcessor:
             exclude_mask = df.set_index(['farm', 'house']).index.isin(zero_farm_house.set_index(['farm', 'house']).index)
             df = df[~exclude_mask]
         
-        return df
+        return df[df['expected_stock'] <= 200].copy()
     
     def generate_rejection_entries(
         self, 

@@ -19,14 +19,16 @@ class CSVExporter:
     Follows Single Responsibility Principle - only handles CSV export.
     """
     
-    def __init__(self, output_dir: str = "output"):
+    def __init__(self, output_dir: str = "output", scenario_name: str = ""):
         """
         Initialize CSV exporter.
         
         Args:
             output_dir: Directory to save CSV files
+            scenario_name: Name of the scenario to append to filenames (e.g., "age_expansion")
         """
         self.output_dir = output_dir
+        self.scenario_name = scenario_name
         self._ensure_output_dir()
     
     def _ensure_output_dir(self):
@@ -34,6 +36,22 @@ class CSVExporter:
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
             logger.info(f"Created output directory: {self.output_dir}")
+    
+    def _get_filename_with_scenario(self, base_filename: str) -> str:
+        """
+        Get filename with scenario name appended if provided.
+        
+        Args:
+            base_filename: Base filename without extension
+            
+        Returns:
+            Filename with scenario name appended if scenario_name is provided
+        """
+        if self.scenario_name:
+            # Split filename and extension
+            name, ext = os.path.splitext(base_filename)
+            return f"{name}_{self.scenario_name}{ext}"
+        return base_filename
     
     def export_harvest_plan_master(self, harvest_df: pd.DataFrame) -> str:
         """
@@ -46,7 +64,7 @@ class CSVExporter:
         Returns:
             Path to exported file
         """
-        filename = os.path.join(self.output_dir, "harvest_plan_master_pivot.xlsx")
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("harvest_plan_master_pivot.xlsx"))
         
         # Ensure required columns exist
         required_columns = [
@@ -58,7 +76,7 @@ class CSVExporter:
         export_df = harvest_df[required_columns].copy()
         
         # Export raw data to CSV for reference
-        csv_filename = os.path.join(self.output_dir, "harvest_plan_master.csv")
+        csv_filename = os.path.join(self.output_dir, self._get_filename_with_scenario("harvest_plan_master.csv"))
         export_df.to_csv(csv_filename, index=True)
         logger.info(f"Exported raw harvest plan data to {csv_filename}")
         
@@ -274,7 +292,7 @@ class CSVExporter:
         Returns:
             Path to exported file
         """
-        filename = os.path.join(self.output_dir, "harvest_plan_slaughterhouse.csv")
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("harvest_plan_slaughterhouse.csv"))
         
         sh_df = harvest_df[harvest_df['harvest_type'] == 'SH'].copy()
         
@@ -299,7 +317,7 @@ class CSVExporter:
         Returns:
             Path to exported file
         """
-        filename = os.path.join(self.output_dir, "harvest_plan_market.csv")
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("harvest_plan_market.csv"))
         
         market_df = harvest_df[harvest_df['harvest_type'] == 'Market'].copy()
         
@@ -324,7 +342,7 @@ class CSVExporter:
         Returns:
             Path to exported file
         """
-        filename = os.path.join(self.output_dir, "harvest_plan_culls.csv")
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("harvest_plan_culls.csv"))
         
         if not cull_df.empty:
             cull_df['date'] = pd.to_datetime(cull_df['date']).dt.strftime('%Y-%m-%d')
@@ -349,7 +367,7 @@ class CSVExporter:
         Returns:
             Path to exported file
         """
-        filename = os.path.join(self.output_dir, "summary_farms.csv")
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("summary_farms.csv"))
         
         # Group by farm and harvest type
         farm_summary = harvest_df.groupby(['farm', 'harvest_type']).agg({
@@ -396,7 +414,7 @@ class CSVExporter:
         Returns:
             Path to exported file
         """
-        filename = os.path.join(self.output_dir, "summary_houses.csv")
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("summary_houses.csv"))
         
         # Group by farm, house, and harvest type
         house_summary = harvest_df.groupby(['farm', 'house', 'harvest_type']).agg({
@@ -441,7 +459,7 @@ class CSVExporter:
         Returns:
             Path to exported file
         """
-        filename = os.path.join(self.output_dir, "unharvested_stock.csv")
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("unharvested_stock.csv"))
 
         # Find records in ready_df but not in unharvested_df and not in best_market_plan
         # Get unique farm-house pairs from unharvested_df and best_market_plan
@@ -507,7 +525,7 @@ class CSVExporter:
         Returns:
             Path to exported file
         """
-        filename = os.path.join(self.output_dir, "rejection_dates.csv")
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("rejection_dates.csv"))
         
         if not rejection_df.empty:
             export_df = rejection_df.copy()
@@ -534,7 +552,7 @@ class CSVExporter:
         Returns:
             Path to exported file
         """
-        filename = os.path.join(self.output_dir, "daily_harvest_summary.csv")
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("daily_harvest_summary.csv"))
         
         # Group by date and harvest type
         daily_summary = harvest_df.groupby(['date', 'harvest_type']).agg({
@@ -561,14 +579,15 @@ class HarvestPlanExporter:
     High-level exporter that coordinates all CSV exports.
     """
     
-    def __init__(self, output_dir: str = "output"):
+    def __init__(self, output_dir: str = "output", scenario_name: str = ""):
         """
         Initialize harvest plan exporter.
         
         Args:
             output_dir: Directory to save CSV files
+            scenario_name: Name of the scenario to append to filenames (e.g., "age_expansion")
         """
-        self.csv_exporter = CSVExporter(output_dir)
+        self.csv_exporter = CSVExporter(output_dir, scenario_name)
     
     def generate_harvest_plan_csvs(
         self, 
