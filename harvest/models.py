@@ -165,6 +165,8 @@ class ServiceConfig:
     cleaning_days: int = 15
     safety_days: int = 3
     culls_avg_weight: float = 1.2
+    daily_mortality_rate: float = 0.001,  # 0.1% daily mortality rate for stock recalculation
+    enable_stock_recalculation: bool = True  # Enable/disable expected stock recalculation after combined harvest
 
 
 @dataclass

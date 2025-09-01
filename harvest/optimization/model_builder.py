@@ -39,7 +39,7 @@ class OptimizationModelBuilder:
         harvest_type: str
     ) -> pd.DataFrame:
         """
-        Flag rows that meet weight requirements for harvest type.
+        Flag rows that meet weight requirements for harvest type using V5.1 logic.
         
         Args:
             df: Input DataFrame
@@ -50,21 +50,9 @@ class OptimizationModelBuilder:
         Returns:
             DataFrame with readiness flags added
         """
-        df = df.copy()
-        df['date'] = pd.to_datetime(df['date'])
+        from .slaughterhouse_optimizer_v5 import flag_ready_avg_weight as flag_ready_v5
         
-        if harvest_type == 'SH':
-            df['ready_SH'] = df['avg_weight'].apply(
-                lambda x: 1 if min_weight <= x <= max_weight else 0
-            )
-        elif harvest_type == 'Market':
-            df['ready_Market'] = df['avg_weight'].apply(
-                lambda x: 1 if min_weight <= x <= max_weight else 0
-            )
-        else:
-            raise ValueError("Invalid harvest_type. Use 'SH' or 'Market'.")
-        
-        return df
+        return flag_ready_v5(df, min_weight, max_weight, harvest_type)
     
     def flag_ready_daily_stock(
         self, 
@@ -74,7 +62,7 @@ class OptimizationModelBuilder:
         harvest_type: str
     ) -> pd.DataFrame:
         """
-        Flag days that meet stock requirements for harvest type.
+        Flag days that meet stock requirements for harvest type using V5.1 logic.
         
         Args:
             df: Input DataFrame with weight readiness flags
@@ -85,29 +73,9 @@ class OptimizationModelBuilder:
         Returns:
             DataFrame with daily stock flags added
         """
-        df = df.copy()
-        df['date'] = pd.to_datetime(df['date'])
+        from .slaughterhouse_optimizer_v5 import flag_ready_daily_stock as flag_stock_v5
         
-        if harvest_type == 'SH':
-            ready_df = df[df['ready_SH'] == 1]
-            stock_sum_by_date = ready_df.groupby('date')['expected_stock'].sum()
-            flagged_dates = stock_sum_by_date[
-                (stock_sum_by_date >= min_stock)
-            ].index
-            df['flag_day_sh'] = df['date'].isin(flagged_dates).astype(int)
-            
-        elif harvest_type == 'Market':
-            ready_df = df[df['ready_Market'] == 1]
-            stock_sum_by_date = ready_df.groupby('date')['expected_stock'].sum()
-            flagged_dates = stock_sum_by_date[
-                (stock_sum_by_date >= min_stock)
-            ].index
-            df['flag_day_M'] = df['date'].isin(flagged_dates).astype(int)
-            
-        else:
-            raise ValueError("Invalid harvest_type. Use 'SH' or 'Market'.")
-        
-        return df
+        return flag_stock_v5(df, min_stock, max_stock, harvest_type, min_per_house=2000)
 
     def flag_bypass_capacity(
         self,
@@ -180,8 +148,8 @@ class OptimizationModelBuilder:
         max_pct_per_house: float = 0.3
     ) -> pd.DataFrame:
         """
-        Distribute slaughterhouse harvest using uniform percentage approach.
-        This ensures each house gets exactly one allocation and respects max_pct_per_house.
+        Distribute slaughterhouse harvest using the new V5.1 optimizer.
+        This function now delegates to the enhanced optimizer for better vacation day handling.
         
         Args:
             df_day: DataFrame for a specific day
@@ -191,86 +159,14 @@ class OptimizationModelBuilder:
         Returns:
             DataFrame with harvest allocations
         """
-        df = df_day.reset_index(drop=True).copy()
-        df['farm_house_key'] = df['farm'].astype(str) + "_" + df['house'].astype(str)
+        from .slaughterhouse_optimizer_v5 import SH_min_houses_uniform_extra
         
-        # Filter only valid rows
-        df = df[(df['avg_weight'] > 0) & (df['expected_stock'] > 0)]
-        if df.empty:
-            logger.warning("No valid houses available for slaughterhouse harvest")
-            return pd.DataFrame()
-        
-        # Sort houses by increasing avg_weight (lowest weight first for slaughterhouse preference)
-        df = df.sort_values(by='avg_weight').reset_index(drop=True)
-        
-        # Binary search to find the best uniform percentage that meets min_total_stock
-        low = 0.0
-        high = max_pct_per_house
-        best_pct = 0.0
-        
-        # Binary search to find the best uniform percentage (same for all) that stays within target
-        for _ in range(100):
-            mid = (low + high) / 2
-            total_harvest = (df['expected_stock'] * mid).sum()
-            
-            if total_harvest < min_total_stock:
-                low = mid
-            else:
-                best_pct = mid
-                high = mid
-            
-            if abs(total_harvest - min_total_stock) < 1:
-                break
-        
-        # Apply the uniform percentage to all houses
-        df['harvest_pct'] = best_pct
-        df['harvest_stock'] = (df['expected_stock'] * df['harvest_pct']).clip(
-            upper=(df['expected_stock'] * max_pct_per_house)
+        return SH_min_houses_uniform_extra(
+            df_day=df_day,
+            min_total_stock=min_total_stock,
+            max_pct_per_house=max_pct_per_house,
+            min_per_house=2000
         )
-        df['harvest_stock'] = df['harvest_stock'].astype(int)
-        df['net_meat'] = df['harvest_stock'] * df['avg_weight']
-        df['selected'] = (df['harvest_stock'] > 0).astype(int)
-        df['harvest_type'] = 'SH'
-        
-        # Adjust total if needed to exactly match min_total_stock
-        harvest_total = df['harvest_stock'].sum()
-        if harvest_total > min_total_stock:
-            overflow = harvest_total - min_total_stock
-            # Start removing from highest-weight houses (least preferred)
-            for idx in df.sort_values(by='avg_weight', ascending=False).index:
-                if overflow <= 0:
-                    break
-                remove_qty = min(df.at[idx, 'harvest_stock'], overflow)
-                df.at[idx, 'harvest_stock'] -= remove_qty
-                df.at[idx, 'net_meat'] = df.at[idx, 'harvest_stock'] * df.at[idx, 'avg_weight']
-                df.at[idx, 'selected'] = int(df.at[idx, 'harvest_stock'] > 0)
-                overflow -= remove_qty
-        
-        # Return only selected harvests with proper column structure
-        result_df = df[df['harvest_stock'] > 0].copy()
-        if not result_df.empty:
-            # Ensure proper column structure for consistency with other parts of the system
-            result_columns = [
-                'farm', 'date', 'house', 'age', 'expected_mortality', 'expected_stock',
-                'expected_mortality_rate', 'avg_weight', 'selected', 'harvest_stock',
-                'net_meat', 'harvest_type'
-            ]
-            
-            # Rename columns to match expected format if needed
-            column_mapping = {
-                'expected_mortality': 'expected_mortality',
-                'expected_mortality_rate': 'expected_mortality_rate'
-            }
-            
-            for old_col, new_col in column_mapping.items():
-                if old_col in result_df.columns and new_col not in result_df.columns:
-                    result_df = result_df.rename(columns={old_col: new_col})
-            
-            # Select only the required columns that exist
-            existing_columns = [col for col in result_columns if col in result_df.columns]
-            result_df = result_df[existing_columns]
-        
-        return result_df
     
     def build_market_model(
         self,

@@ -58,8 +58,6 @@ def main():
         
         if result.get("status") == "success":
             logger.info("Optimization completed successfully!")
-            logger.info(f"Summary: {result['summary']}")
-            logger.info(f"Exported files: {list(result['exported_files'].keys())}")
         else:
             logger.error(f"Optimization failed: {result.get('error')}")
             

@@ -282,6 +282,8 @@ class CSVExporter:
         logger.info(f"Exported professional pivoted master harvest plan to {filename}")
         return filename
 
+    
+
     def export_harvest_plan_slaughterhouse(self, harvest_df: pd.DataFrame) -> str:
         """
         Export slaughterhouse-specific harvest plan CSV.
@@ -318,6 +320,8 @@ class CSVExporter:
             Path to exported file
         """
         filename = os.path.join(self.output_dir, self._get_filename_with_scenario("harvest_plan_market.csv"))
+
+        
         
         market_df = harvest_df[harvest_df['harvest_type'] == 'Market'].copy()
         
@@ -479,11 +483,11 @@ class CSVExporter:
             # Get culls and slaughterhouse allocations for these farm-house combinations
             culls_allocations = best_market_plan[best_market_plan[['farm', 'house']].apply(
                 lambda x: x.isin(not_in_both[['farm', 'house']]).all(), axis=1
-            )]['expected_stock'].sum() if not best_market_plan.empty else 0
+            )]['harvest_stock'].sum() if not best_market_plan.empty else 0
             
             sh_allocations = best_sh_plan[best_sh_plan[['farm', 'house']].apply(
                 lambda x: x.isin(not_in_both[['farm', 'house']]).all(), axis=1
-            )]['expected_stock'].sum() if 'best_sh_plan' in locals() and not best_sh_plan.empty else 0
+            )]['harvest_stock'].sum() if 'best_sh_plan' in locals() and not best_sh_plan.empty else 0
             
             # Subtract allocations from expected_stock
             not_in_both['expected_stock'] = not_in_both['expected_stock'] - (culls_allocations + sh_allocations)
@@ -632,7 +636,7 @@ class HarvestPlanExporter:
         if unharvested_df is not None:
             exported_files['unharvested_stock'] = self.csv_exporter.export_unharvested_stock(unharvested_df, ready_df, best_market_plan, best_sh_plan)
         else:
-            exported_files['unharvested_stock'] = self.csv_exporter.export_unharvested_stock(pd.DataFrame())
+            exported_files['unharvested_stock'] = self.csv_exporter.export_unharvested_stock(pd.DataFrame(), ready_df, best_market_plan, best_sh_plan)
         
         # Export rejection reasons
         if rejection_df is not None:

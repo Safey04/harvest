@@ -167,8 +167,9 @@ class SolutionProcessor:
             future_rows = df[mask].sort_values(by='date')
             
             for idx, row in future_rows.iterrows():
-                mortality_rate = row['expected_mortality']
-                new_stock = prev_stock - mortality_rate
+                mortality_rate = row['expected_mortality_rate']
+                mortality_quantity = row['expected_mortality']
+                new_stock = prev_stock - min(mortality_quantity,(mortality_rate * prev_stock))
                 new_stock_rounded = int(round(new_stock))
                 
                 if new_stock_rounded > 0:
@@ -241,8 +242,10 @@ class SolutionProcessor:
             # Create a mask to exclude these combinations
             exclude_mask = df.set_index(['farm', 'house']).index.isin(zero_farm_house.set_index(['farm', 'house']).index)
             df = df[~exclude_mask]
+
+            df = df[df['expected_stock'] > 200].copy()
         
-        return df[df['expected_stock'] <= 200].copy()
+        return df
     
     def generate_rejection_entries(
         self, 
@@ -380,8 +383,9 @@ class SolutionProcessor:
             future_rows = df[mask].sort_values(by='date')
             
             for idx, row in future_rows.iterrows():
-                mortality_rate = row.get('expected_mortality', 0)
-                new_stock = prev_stock - mortality_rate
+                mortality_rate = row.get('expected_mortality_rate', 0)
+                mortality_quantity = row.get('expected_mortality', 0)
+                new_stock = prev_stock - min(mortality_quantity,(mortality_rate * prev_stock))
                 new_stock_rounded = int(round(new_stock))
                 
                 if new_stock_rounded > 0:
