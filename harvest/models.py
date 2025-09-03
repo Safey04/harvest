@@ -142,6 +142,7 @@ class SlaughterHouseConfig:
     min_stock: int
     max_stock: int
     max_pct_per_house: float
+    optimizer_type: str = "base"  # Options: "base", "weight", "pct"
 
 
 @dataclass

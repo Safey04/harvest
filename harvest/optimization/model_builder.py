@@ -148,8 +148,8 @@ class OptimizationModelBuilder:
         max_pct_per_house: float = 0.3
     ) -> pd.DataFrame:
         """
-        Distribute slaughterhouse harvest using the new V5.1 optimizer.
-        This function now delegates to the enhanced optimizer for better vacation day handling.
+        Distribute slaughterhouse harvest using uniform percentage approach.
+        This ensures each house gets exactly one allocation and respects max_pct_per_house.
         
         Args:
             df_day: DataFrame for a specific day
@@ -159,14 +159,86 @@ class OptimizationModelBuilder:
         Returns:
             DataFrame with harvest allocations
         """
-        from .slaughterhouse_optimizer_v5 import SH_min_houses_uniform_extra
+        df = df_day.reset_index(drop=True).copy()
+        df['farm_house_key'] = df['farm'].astype(str) + "_" + df['house'].astype(str)
         
-        return SH_min_houses_uniform_extra(
-            df_day=df_day,
-            min_total_stock=min_total_stock,
-            max_pct_per_house=max_pct_per_house,
-            min_per_house=2000
+        # Filter only valid rows
+        df = df[(df['avg_weight'] > 0) & (df['expected_stock'] > 0)]
+        if df.empty:
+            logger.warning("No valid houses available for slaughterhouse harvest")
+            return pd.DataFrame()
+        
+        # Sort houses by increasing avg_weight (lowest weight first for slaughterhouse preference)
+        df = df.sort_values(by='avg_weight').reset_index(drop=True)
+        
+        # Binary search to find the best uniform percentage that meets min_total_stock
+        low = 0.0
+        high = max_pct_per_house
+        best_pct = 0.0
+        
+        # Binary search to find the best uniform percentage (same for all) that stays within target
+        for _ in range(100):
+            mid = (low + high) / 2
+            total_harvest = (df['expected_stock'] * mid).sum()
+            
+            if total_harvest < min_total_stock:
+                low = mid
+            else:
+                best_pct = mid
+                high = mid
+            
+            if abs(total_harvest - min_total_stock) < 1:
+                break
+        
+        # Apply the uniform percentage to all houses
+        df['harvest_pct'] = best_pct
+        df['harvest_stock'] = (df['expected_stock'] * df['harvest_pct']).clip(
+            upper=(df['expected_stock'] * max_pct_per_house)
         )
+        df['harvest_stock'] = df['harvest_stock'].astype(int)
+        df['net_meat'] = df['harvest_stock'] * df['avg_weight']
+        df['selected'] = (df['harvest_stock'] > 0).astype(int)
+        df['harvest_type'] = 'SH'
+        
+        # Adjust total if needed to exactly match min_total_stock
+        harvest_total = df['harvest_stock'].sum()
+        if harvest_total > min_total_stock:
+            overflow = harvest_total - min_total_stock
+            # Start removing from highest-weight houses (least preferred)
+            for idx in df.sort_values(by='avg_weight', ascending=False).index:
+                if overflow <= 0:
+                    break
+                remove_qty = min(df.at[idx, 'harvest_stock'], overflow)
+                df.at[idx, 'harvest_stock'] -= remove_qty
+                df.at[idx, 'net_meat'] = df.at[idx, 'harvest_stock'] * df.at[idx, 'avg_weight']
+                df.at[idx, 'selected'] = int(df.at[idx, 'harvest_stock'] > 0)
+                overflow -= remove_qty
+        
+        # Return only selected harvests with proper column structure
+        result_df = df[df['harvest_stock'] > 0].copy()
+        if not result_df.empty:
+            # Ensure proper column structure for consistency with other parts of the system
+            result_columns = [
+                'farm', 'date', 'house', 'age', 'expected_mortality', 'expected_stock',
+                'expected_mortality_rate', 'avg_weight', 'selected', 'harvest_stock',
+                'net_meat', 'harvest_type'
+            ]
+            
+            # Rename columns to match expected format if needed
+            column_mapping = {
+                'expected_mortality': 'expected_mortality',
+                'expected_mortality_rate': 'expected_mortality_rate'
+            }
+            
+            for old_col, new_col in column_mapping.items():
+                if old_col in result_df.columns and new_col not in result_df.columns:
+                    result_df = result_df.rename(columns={old_col: new_col})
+            
+            # Select only the required columns that exist
+            existing_columns = [col for col in result_columns if col in result_df.columns]
+            result_df = result_df[existing_columns]
+        
+        return result_df
     
     def build_market_model(
         self,
@@ -223,8 +295,26 @@ class OptimizationModelBuilder:
                     cat=LpContinuous
                 )
             
-            # Objective: maximize total net meat
-            prob += lpSum([harvest_vars[i] * df.loc[i, 'avg_weight'] for i in valid_indices])
+            # Objective: maximize metric with fallbacks: profit_per_bird -> avg_weight -> 1
+            if 'profit_per_bird' in df.columns:
+                objective_metric = df['profit_per_bird'].copy()
+            else:
+                objective_metric = None
+
+            if objective_metric is None or objective_metric.isna().all():
+                if 'avg_weight' in df.columns:
+                    objective_metric = df['avg_weight'].copy()
+                else:
+                    objective_metric = pd.Series(1.0, index=df.index)
+            else:
+                if 'avg_weight' in df.columns:
+                    objective_metric = objective_metric.fillna(df['avg_weight'])
+                objective_metric = objective_metric.fillna(1.0)
+
+            prob += lpSum([
+                harvest_vars[i] * objective_metric.loc[i]
+                for i in valid_indices
+            ])
             
             # Capacity constraints (with optional bypass)
             total_harvest = lpSum([harvest_vars[i] for i in valid_indices])
@@ -232,6 +322,15 @@ class OptimizationModelBuilder:
             prob += total_harvest <= capacity_limit
             if adjusted_min_stock > 0:
                 prob += total_harvest >= adjusted_min_stock
+            
+            # Priority constraint: ensure minimum priority houses are always selected
+            # Find minimum priority value (highest priority)
+            min_priority = df['priority'].min() if not df.empty else 1
+            min_priority_indices = df[df['priority'] == min_priority].index.tolist()
+            
+            # Add constraint: at least one minimum priority house must be harvested
+            if min_priority_indices:
+                prob += lpSum([harvest_vars[i] for i in min_priority_indices]) >= 1
             
             # Solve to check feasibility under current tolerance
             status = prob.solve(PULP_CBC_CMD(msg=False))
@@ -257,10 +356,39 @@ class OptimizationModelBuilder:
                     upBound=max_harvest,
                     cat=LpContinuous
                 )
-            prob += lpSum([df.loc[i, 'avg_weight'] for i in valid_indices])
+            # Objective: maximize metric with fallbacks: profit_per_bird -> avg_weight -> 1
+            if 'profit_per_bird' in df.columns:
+                objective_metric = df['profit_per_bird'].copy()
+            else:
+                objective_metric = None
+
+            if objective_metric is None or objective_metric.isna().all():
+                if 'avg_weight' in df.columns:
+                    objective_metric = df['avg_weight'].copy()
+                else:
+                    objective_metric = pd.Series(1.0, index=df.index)
+            else:
+                if 'avg_weight' in df.columns:
+                    objective_metric = objective_metric.fillna(df['avg_weight'])
+                objective_metric = objective_metric.fillna(1.0)
+
+            prob += lpSum([
+                harvest_vars[i] * objective_metric.loc[i]
+                for i in valid_indices
+            ])
+            
+            # Capacity constraints
             total_harvest = lpSum([harvest_vars[i] for i in valid_indices])
             capacity_limit = max_total_stock + 20000 if bypass_capacity == 1 else max_total_stock
             prob += total_harvest <= capacity_limit
+            
+            # Priority constraint: ensure minimum priority houses are always selected
+            min_priority = df['priority'].min() if not df.empty else 1
+            min_priority_indices = df[df['priority'] == min_priority].index.tolist()
+            
+            # Add constraint: at least one minimum priority house must be harvested
+            if min_priority_indices:
+                prob += lpSum([harvest_vars[i] for i in min_priority_indices]) >= 1
             status = prob.solve(PULP_CBC_CMD(msg=False))
             if status == 1:
                 feasible_prob = prob

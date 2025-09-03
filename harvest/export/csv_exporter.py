@@ -301,6 +301,8 @@ class CSVExporter:
         if not sh_df.empty:
             sh_df['date'] = pd.to_datetime(sh_df['date']).dt.strftime('%Y-%m-%d')
             sh_df.to_csv(filename, index=False)
+            columns_to_export = ['farm','date','house','age','harvest_type','harvest_stock','expected_stock','avg_weight','net_meat','expected_mortality','expected_mortality_rate']
+            sh_df = sh_df[columns_to_export]
             logger.info(f"Exported slaughterhouse harvest plan to {filename}")
         else:
             # Create empty file with headers
@@ -327,6 +329,10 @@ class CSVExporter:
         
         if not market_df.empty:
             market_df['date'] = pd.to_datetime(market_df['date']).dt.strftime('%Y-%m-%d')
+
+            #only export these columns
+            columns_to_export = ['farm','date','house','age','harvest_type','harvest_stock','expected_stock','avg_weight','net_meat','expected_mortality','expected_mortality_rate','priority','profit_per_bird']
+            market_df = market_df[columns_to_export]
             market_df.to_csv(filename, index=False)
             logger.info(f"Exported market harvest plan to {filename}")
         else:
@@ -350,6 +356,7 @@ class CSVExporter:
         
         if not cull_df.empty:
             cull_df['date'] = pd.to_datetime(cull_df['date']).dt.strftime('%Y-%m-%d')
+            cull_df = cull_df[['farm', 'date', 'house', 'age', 'harvest_type', 'harvest_stock', 'expected_stock', 'avg_weight', 'net_meat']]
             cull_df.to_csv(filename, index=False)
             logger.info(f"Exported cull harvest plan to {filename}")
         else:
@@ -505,6 +512,9 @@ class CSVExporter:
             export_df = export_df.drop_duplicates(subset=['farm', 'house', 'date', 'age'])
             export_df['unharvested_reason'] = 'Exceeded Capacity & not optimal Average Weight'
             export_df = pd.concat([export_df, not_in_both])
+            columns_to_export =  ["farm","date","house","age","expected_mortality","expected_stock","expected_mortality_rate","avg_weight","unharvested_reason"]
+            export_df = export_df[columns_to_export]
+            export_df = export_df[export_df['expected_stock'] > 1550]
             export_df.to_csv(filename, index=False)
             logger.info(f"Exported unharvested stock to {filename}")
         elif not not_in_both.empty: 
@@ -544,6 +554,24 @@ class CSVExporter:
             logger.info(f"No rejection data, created empty file: {filename}")
         
         return filename
+
+    def export_harvest_progression(self, harvest_df_progress: pd.DataFrame) -> str:
+        """
+        Export harvest progression CSV.
+        
+        Args:
+            harvest_df: Combined harvest DataFrame
+            
+        Returns:
+            Path to exported file
+        """
+        filename = os.path.join(self.output_dir, self._get_filename_with_scenario("harvest_progression.csv"))
+        
+        harvest_df_progress.to_csv(filename, index=False)
+        logger.info(f"Exported harvest progression to {filename}")
+        
+        return filename
+
 
     
     def export_daily_harvest_summary(self, harvest_df: pd.DataFrame) -> str:
@@ -601,7 +629,9 @@ class HarvestPlanExporter:
         ready_df: pd.DataFrame = None,
         best_sh_plan: pd.DataFrame = None,
         best_market_plan: pd.DataFrame = None,
-        cull_df: pd.DataFrame = None
+        cull_df: pd.DataFrame = None,
+        harvest_df_progress: pd.DataFrame = None
+
     ) -> Dict[str, str]:
         """
         Generate all required CSV files for harvest plan.
@@ -643,6 +673,12 @@ class HarvestPlanExporter:
             exported_files['rejection_reasons'] = self.csv_exporter.export_rejection_reasons(rejection_df)
         else:
             exported_files['rejection_reasons'] = self.csv_exporter.export_rejection_reasons(pd.DataFrame())
+
+        # Export harvest progression
+        if harvest_df_progress is not None:
+            exported_files['harvest_progression'] = self.csv_exporter.export_harvest_progression(harvest_df_progress)
+        else:
+            exported_files['harvest_progression'] = self.csv_exporter.export_harvest_progression(pd.DataFrame())
 
         # Export daily summary
         exported_files['daily_summary'] = self.csv_exporter.export_daily_harvest_summary(harvest_df)

@@ -12,6 +12,26 @@ from typing import Dict, Tuple, Any
 logger = logging.getLogger(__name__)
 
 
+def get_optimizer_function(optimizer_type):
+    """
+    Get the appropriate optimizer function based on the optimizer type.
+    
+    Parameters:
+    - optimizer_type (str): Type of optimizer ("base", "weight", "pct")
+    
+    Returns:
+    - function: The appropriate optimizer function
+    """
+    if optimizer_type == "base":
+        return SH_min_houses_uniform_extra_base
+    elif optimizer_type == "weight":
+        return SH_min_houses_uniform_extra  # Original function with weight expansion
+    elif optimizer_type == "pct":
+        return SH_min_houses_uniform_extra_pct
+    else:
+        raise ValueError(f"Invalid optimizer_type: {optimizer_type}. Must be 'base', 'weight', or 'pct'.")
+
+
 def add_house_dates_columns(df, duration_days=40, max_harvest_date=None):
     """
     Adds 'start_date', 'end_date', 'last_date', and 'max_harvest_date' columns to the input DataFrame
@@ -209,7 +229,7 @@ def apply_harvest_updates_only_once(df_full, harvest_df):
 
         for idx, row in future_rows.iterrows():
             mortality_rate = row.get('expected_mortality_rate', 0)
-            new_stock = prev_stock * (1 - mortality_rate)
+            new_stock = prev_stock * (1 - mortality_rate) * 0.97  # Adjust for culls
             new_stock_rounded = int(round(new_stock))
 
             if new_stock_rounded > 0:
@@ -311,12 +331,21 @@ def SH_run_daily_harvest_loop(df_input, optimizer_fn, start_date,
                 min_per_house=min_per_house
             )
         else:
-            result = optimizer_fn(
-                day_df,
-                max_pct_per_house=max_pct_per_house,
-                min_total_stock=min_stock,
-                min_per_house=min_per_house
-            )
+            # Check for NF flag to determine optimizer type
+            if "NF" in day_df.columns and (day_df["NF"] == 1).any():
+                result = SH_min_houses_uniform_extra_pct(
+                    day_df,
+                    max_pct_per_house=max_pct_per_house,
+                    min_total_stock=min_stock,
+                    min_per_house=min_per_house
+                )
+            else:
+                result = optimizer_fn(
+                    day_df,
+                    max_pct_per_house=max_pct_per_house,
+                    min_total_stock=min_stock,
+                    min_per_house=min_per_house
+                )
 
         if result.empty:
             logger.warning(f"⚠️ Optimizer returned no harvest for {current_date.date()} — skipping.")
@@ -633,7 +662,7 @@ def SH_min_houses_uniform_extra(
 
     cols = ['farm', 'date', 'house', 'age', 'expected_mortality', 'expected_stock',
             'expected_mortality_rate', 'avg_weight', 'opportunity', 'selected',
-            'harvest_stock', 'net_meat', 'harvest_type', 'final_pct_per_house', 'cap_pct_per_house']
+            'harvest_stock', 'net_meat', 'harvest_type', 'final_pct_per_house', 'cap_pct_per_house',"priority","profit_per_bird"]
     cols = [c for c in cols if c in sel.columns]
     return sel[cols]
 
@@ -741,6 +770,289 @@ def SH_all_houses_uniform_extra(
 
     cols = ['farm', 'date', 'house', 'age', 'expected_mortality', 'expected_stock',
             'expected_mortality_rate', 'avg_weight', 'selected',
+            'harvest_stock', 'net_meat', 'harvest_type', 'final_pct_per_house', 'cap_pct_per_house',"priority","profit_per_bird"]
+    cols = [c for c in cols if c in sel.columns]
+    return sel[cols]
+
+
+def SH_min_houses_uniform_extra_base(
+    df_day,
+    min_total_stock=70000,
+    max_pct_per_house=0.30,   # fixed cap (no escalation)
+    min_per_house=2000,
+    pct_step=0.05,            # unused (kept for signature compatibility)
+    pct_max=1.00              # ceiling
+):
+    """
+    Base optimizer with fixed percentage cap (no escalation).
+    """
+    df0 = df_day.reset_index(drop=True).copy()
+    need = {'farm', 'date', 'house', 'avg_weight', 'expected_stock', 'opportunity'}
+    miss = need - set(df0.columns)
+    if miss:
+        raise ValueError(f"Missing columns: {miss}")
+
+    # validity
+    df0 = df0[(df0['avg_weight'] > 0) & (df0['expected_stock'] > 0)].copy()
+    if df0.empty:
+        return df0.iloc[0:0]
+
+    final_cap_pct = float(min(max_pct_per_house, pct_max))
+
+    def build_selection_fixed(df_src, pct):
+        df = df_src.copy()
+        df['cap'] = np.minimum(
+            np.floor(df['expected_stock'] * pct).astype(int),
+            df['expected_stock'].astype(int)
+        )
+
+        # opp==1 must be feasible at this pct
+        opp1 = df[df['opportunity'] == 1]
+        if not opp1.empty and (opp1['cap'] < min_per_house).any():
+            return None, 0
+
+        df = df[df['cap'] >= min_per_house].copy()
+        if df.empty:
+            return None, 0
+
+        # mandatory: all opp==1
+        sel = df[df['opportunity'] == 1].copy()
+        cap_sum = int(sel['cap'].sum()) if not sel.empty else 0
+
+        # add minimal opp>1 until reaching min_total_stock if possible
+        pool = df[df['opportunity'] > 1].sort_values(
+            ['opportunity', 'avg_weight', 'cap'], ascending=[True, True, False]
+        )
+        for _, row in pool.iterrows():
+            if cap_sum >= min_total_stock:
+                break
+            sel = pd.concat([sel, row.to_frame().T], ignore_index=True)
+            cap_sum += int(row['cap'])
+
+        return sel, cap_sum
+
+    sel, cap_sum = build_selection_fixed(df0, final_cap_pct)
+    if sel is None or sel.empty:
+        return df0.iloc[0:0]
+
+    # use fixed-cap selection
+    sel = sel.copy()
+    sel['cap'] = np.minimum(
+        np.floor(sel['expected_stock'] * final_cap_pct).astype(int),
+        sel['expected_stock'].astype(int)
+    )
+
+    achievable = int(sel['cap'].sum())
+    T = min(int(min_total_stock), achievable)
+
+    # per-house minimum
+    n = len(sel)
+    base_total = n * int(min_per_house)
+    if base_total > T:
+        T = base_total  # still ≤ achievable because cap ≥ min_per_house per house
+
+    # allocate: min + uniform % extra within residual caps, then top-up by lowest weight
+    sel['harvest_stock'] = int(min_per_house)
+    sel['residual_cap'] = (sel['cap'] - sel['harvest_stock']).clip(lower=0).astype(int)
+
+    remaining = int(T - base_total)
+    if remaining > 0:
+        low, high = 0.0, final_cap_pct
+        best_extra = np.zeros(n, dtype=int)
+        exp = sel['expected_stock'].to_numpy()
+        res = sel['residual_cap'].to_numpy()
+
+        for _ in range(60):
+            mid = (low + high) / 2.0
+            extra = np.floor(exp * mid).astype(int)
+            extra = np.minimum(extra, res)
+            if int(extra.sum()) <= remaining:
+                best_extra = extra
+                low = mid
+            else:
+                high = mid
+
+        sel['harvest_stock'] += best_extra
+        spill = remaining - int(best_extra.sum())
+        if spill > 0:
+            for i in sel.sort_values('avg_weight').index:
+                if spill <= 0:
+                    break
+                used = int(sel.at[i, 'harvest_stock'] - min_per_house)
+                can_add = int(sel.at[i, 'residual_cap'] - used)
+                if can_add > 0:
+                    add = min(can_add, spill)
+                    sel.at[i, 'harvest_stock'] += add
+                    spill -= add
+
+    # finalize
+    sel['harvest_stock'] = sel['harvest_stock'].astype(int)
+    sel = sel[sel['harvest_stock'] > 0].copy()
+    sel['net_meat'] = sel['harvest_stock'] * sel['avg_weight']
+    sel['selected'] = 1
+    sel['harvest_type'] = 'SH'
+    sel['final_pct_per_house'] = sel['harvest_stock'].astype(float) / sel['expected_stock'].astype(float)
+    sel['cap_pct_per_house'] = sel['cap'].astype(float) / sel['expected_stock'].astype(float)
+
+    cols = ['farm', 'date', 'house', 'age', 'expected_mortality', 'expected_stock',
+            'expected_mortality_rate', 'avg_weight', 'opportunity', 'selected',
+            'harvest_stock', 'net_meat', 'harvest_type', 'final_pct_per_house', 'cap_pct_per_house']
+    cols = [c for c in cols if c in sel.columns]
+    return sel[cols]
+
+
+def SH_min_houses_uniform_extra_pct(
+    df_day,
+    min_total_stock=70000,
+    max_pct_per_house=0.30,   # starting cap
+    min_per_house=2000,
+    pct_step=0.05,            # increment
+    pct_max=1.00              # ceiling
+):
+    """
+    Percentage optimizer with escalation logic.
+    """
+    df0 = df_day.reset_index(drop=True).copy()
+    need = {'farm', 'date', 'house', 'avg_weight', 'expected_stock', 'opportunity'}
+    miss = need - set(df0.columns)
+    if miss:
+        raise ValueError(f"Missing columns: {miss}")
+
+    # validity
+    df0 = df0[(df0['avg_weight'] > 0) & (df0['expected_stock'] > 0)].copy()
+    if df0.empty:
+        return df0.iloc[0:0]
+
+    def build_selection(df_src, pct):
+        df = df_src.copy()
+        df['cap'] = np.minimum(
+            np.floor(df['expected_stock'] * pct).astype(int),
+            df['expected_stock'].astype(int)
+        )
+        # opp==1 must be selectable at this pct
+        opp1 = df[df['opportunity'] == 1]
+        if not opp1.empty and (opp1['cap'] < min_per_house).any():
+            return None, 0
+
+        df = df[df['cap'] >= min_per_house].copy()
+        if df.empty:
+            return None, 0
+
+        # mandatory: all opp==1
+        sel = df[df['opportunity'] == 1].copy()
+        cap_sum = int(sel['cap'].sum()) if not sel.empty else 0
+
+        # add minimal opp>1 needed (opportunity asc, weight asc, cap desc)
+        pool = df[df['opportunity'] > 1].sort_values(
+            ['opportunity', 'avg_weight', 'cap'], ascending=[True, True, False]
+        )
+        for _, row in pool.iterrows():
+            if cap_sum >= min_total_stock:
+                break
+            sel = pd.concat([sel, row.to_frame().T], ignore_index=True)
+            cap_sum += int(row['cap'])
+
+        return sel, cap_sum
+
+    # escalate pct until target feasible or ceiling reached
+    pct = float(max_pct_per_house)
+    best_sel, best_cap = None, 0
+    while pct <= pct_max + 1e-12:
+        sel, cap_sum = build_selection(df0, pct)
+        if sel is not None:
+            best_sel, best_cap = sel, cap_sum
+            if cap_sum >= min_total_stock:
+                break
+        pct = round(min(pct_max, pct + pct_step), 6)
+
+    # If 100% still cannot reach target -> take maximum available weight (take everything eligible)
+    if best_cap < min_total_stock:
+        df_full = df0.copy()
+        df_full['cap'] = np.floor(df_full['expected_stock']).astype(int)
+
+        # opp==1 houses must be feasible
+        opp1 = df_full[df_full['opportunity'] == 1]
+        if not opp1.empty and (opp1['cap'] < min_per_house).any():
+            return df0.iloc[0:0]
+
+        df_full = df_full[df_full['cap'] >= min_per_house].copy()
+        if df_full.empty:
+            return df0.iloc[0:0]
+
+        df_full['harvest_stock'] = df_full['cap'].astype(int)
+        df_full['net_meat'] = df_full['harvest_stock'] * df_full['avg_weight']
+        df_full['selected'] = 1
+        df_full['harvest_type'] = 'SH'
+        df_full['final_pct_per_house'] = df_full['harvest_stock'] / df_full['expected_stock']
+        df_full['cap_pct_per_house'] = 1.0
+
+        cols = ['farm', 'date', 'house', 'age', 'expected_mortality', 'expected_stock',
+                'expected_mortality_rate', 'avg_weight', 'opportunity', 'selected',
+                'harvest_stock', 'net_meat', 'harvest_type', 'final_pct_per_house', 'cap_pct_per_house']
+        cols = [c for c in cols if c in df_full.columns]
+        return df_full[cols]
+
+    # Otherwise proceed with uniform-extra allocation using the best selection
+    sel = best_sel.copy()
+    sel['cap'] = np.minimum(
+        np.floor(sel['expected_stock'] * min(pct, pct_max)).astype(int),
+        sel['expected_stock'].astype(int)
+    )
+
+    achievable = int(sel['cap'].sum())
+    T = min_total_stock if achievable >= min_total_stock else achievable
+
+    # per-house minimum
+    n = len(sel)
+    base_total = n * int(min_per_house)
+    if base_total > T:
+        T = base_total
+
+    # allocate: min + uniform % extra within residual caps, then top-up by lowest weight
+    sel['harvest_stock'] = int(min_per_house)
+    sel['residual_cap'] = (sel['cap'] - sel['harvest_stock']).clip(lower=0).astype(int)
+
+    remaining = int(T - base_total)
+    if remaining > 0:
+        low, high = 0.0, float(min(pct, pct_max))
+        best_extra = np.zeros(n, dtype=int)
+        exp = sel['expected_stock'].to_numpy()
+        res = sel['residual_cap'].to_numpy()
+
+        for _ in range(60):
+            mid = (low + high) / 2.0
+            extra = np.floor(exp * mid).astype(int)
+            extra = np.minimum(extra, res)
+            if int(extra.sum()) <= remaining:
+                best_extra = extra
+                low = mid
+            else:
+                high = mid
+
+        sel['harvest_stock'] += best_extra
+        spill = remaining - int(best_extra.sum())
+        if spill > 0:
+            for i in sel.sort_values('avg_weight').index:
+                if spill <= 0:
+                    break
+                used = int(sel.at[i, 'harvest_stock'] - min_per_house)
+                can_add = int(sel.at[i, 'residual_cap'] - used)
+                if can_add > 0:
+                    add = min(can_add, spill)
+                    sel.at[i, 'harvest_stock'] += add
+                    spill -= add
+
+    # finalize
+    sel['harvest_stock'] = sel['harvest_stock'].astype(int)
+    sel = sel[sel['harvest_stock'] > 0].copy()
+    sel['net_meat'] = sel['harvest_stock'] * sel['avg_weight']
+    sel['selected'] = 1
+    sel['harvest_type'] = 'SH'
+    sel['final_pct_per_house'] = sel['harvest_stock'].astype(float) / sel['expected_stock'].astype(float)
+    sel['cap_pct_per_house'] = sel['cap'].astype(float) / sel['expected_stock'].astype(float)
+
+    cols = ['farm', 'date', 'house', 'age', 'expected_mortality', 'expected_stock',
+            'expected_mortality_rate', 'avg_weight', 'opportunity', 'selected',
             'harvest_stock', 'net_meat', 'harvest_type', 'final_pct_per_house', 'cap_pct_per_house']
     cols = [c for c in cols if c in sel.columns]
     return sel[cols]

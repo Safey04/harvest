@@ -336,24 +336,22 @@ class DataLoader:
         # Load data
         df = self.load_growth_data(file_path)
         
+        # Add feed consumption column
+        ready_df = self.add_feed_consumption_column(df)
 
+        # Add price column
+        ready_df = self.add_price_column(ready_df, file_path_price)
 
-        # # Add feed consumption column
-        # ready_df = self.add_feed_consumption_column(df)
+        # Add total profit column
+        ready_df = self.add_total_profit_column(ready_df, feed_price)
 
-        # # Add price column
-        # ready_df = self.add_price_column(ready_df, file_path_price)
-
-        # # Add total profit column
-        # ready_df = self.add_total_profit_column(ready_df, feed_price)
-
-        # # Add meat loss column
-        # ready_df = self.add_profit_loss_column(ready_df)
+        # Add meat loss column
+        ready_df = self.add_profit_loss_column(ready_df)
         
-        # # Add priority column
-        # ready_df = self.add_priority_column(ready_df)
+        # Add priority column
+        ready_df = self.add_priority_column(ready_df)
 
-        df_with_dates = self.add_house_dates_columns(df, duration_days, max_harvest_date, cleaning_days, safety_days)
+        df_with_dates = self.add_house_dates_columns(ready_df, duration_days, max_harvest_date, cleaning_days, safety_days)
         
         # Remove invalid dates
         cleaned_df, removed_df = self.remove_invalid_dates(df_with_dates)
