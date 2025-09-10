@@ -474,8 +474,15 @@ class CSVExporter:
 
         # Find records in ready_df but not in unharvested_df and not in best_market_plan
         # Get unique farm-house pairs from unharvested_df and best_market_plan
-        unharvested_pairs = unharvested_df[['farm', 'house']].drop_duplicates()
-        market_plan_pairs = best_market_plan[['farm', 'house']].drop_duplicates()
+        if not unharvested_df.empty and 'farm' in unharvested_df.columns and 'house' in unharvested_df.columns:
+            unharvested_pairs = unharvested_df[['farm', 'house']].drop_duplicates()
+        else:
+            unharvested_pairs = pd.DataFrame(columns=['farm', 'house'])
+            
+        if not best_market_plan.empty and 'farm' in best_market_plan.columns and 'house' in best_market_plan.columns:
+            market_plan_pairs = best_market_plan[['farm', 'house']].drop_duplicates()
+        else:
+            market_plan_pairs = pd.DataFrame(columns=['farm', 'house'])
         
         # Combine unharvested and market plan pairs
         excluded_pairs = pd.concat([unharvested_pairs, market_plan_pairs]).drop_duplicates()
@@ -506,7 +513,7 @@ class CSVExporter:
 
 
         
-        if not unharvested_df.empty:
+        if not unharvested_df.empty and 'farm' in unharvested_df.columns and 'house' in unharvested_df.columns:
             export_df = unharvested_df.copy()
             export_df['date'] = pd.to_datetime(export_df['date']).dt.strftime('%Y-%m-%d')
             export_df = export_df.drop_duplicates(subset=['farm', 'house', 'date', 'age'])

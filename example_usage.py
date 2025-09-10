@@ -21,7 +21,7 @@ def main():
         min_stock=30000,
         max_stock=30000,
         max_pct_per_house=0.3,
-        optimizer_type="base"  # Options: "base", "weight", "pct"
+        optimizer_type="base"  # Will run all three scenarios: base, weight, pct
     )
     
     market_config = MarketConfig(

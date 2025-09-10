@@ -212,7 +212,19 @@ class DataLoader:
         # Calculate meat loss for each farm-house group (day - next day )
 
         stock_loss = df.groupby(['farm', 'house'])['expected_stock'].diff().fillna(0).abs().astype(int)
+
         df['profit_loss'] = stock_loss * df["avg_weight"].fillna(0) * df['price']
+        return df
+
+    def adjust_expected_stock(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Adjust expected stock by subtracting the harvest stock.
+        """
+        df = df.copy()
+        # Group by farm and house and set all rows to the same value as the value at age 1
+        df['expected_stock'] = df.groupby(['farm', 'house'])['expected_stock'].transform(
+            lambda group: group.iloc[0] if len(group) > 0 else group
+        )
         return df
     
     def add_priority_column(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -341,6 +353,8 @@ class DataLoader:
 
         # Add price column
         ready_df = self.add_price_column(ready_df, file_path_price)
+
+        # ready_df = self.adjust_expected_stock(ready_df)
 
         # Add total profit column
         ready_df = self.add_total_profit_column(ready_df, feed_price)

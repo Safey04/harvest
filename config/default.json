@@ -1,0 +1,63 @@
+{
+  "environment": "development",
+  "debug": true,
+  "version": "1.0.0",
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "database": "harvest_optimization",
+    "username": "harvest_user",
+    "connection_timeout": 30,
+    "pool_size": 10
+  },
+  "optimization": {
+    "solver": "PULP_CBC_CMD",
+    "time_limit": 300,
+    "gap_tolerance": 0.01,
+    "threads": 4,
+    "memory_limit": 4096,
+    "enable_presolve": true,
+    "enable_cuts": true,
+    "log_level": 1
+  },
+  "data_processing": {
+    "chunk_size": 10000,
+    "max_file_size": 104857600,
+    "supported_formats": ["csv", "xlsx", "json"],
+    "encoding": "utf-8",
+    "date_format": "%Y-%m-%d",
+    "decimal_precision": 2,
+    "validate_on_load": true
+  },
+  "export": {
+    "default_format": "csv",
+    "output_directory": "./output",
+    "include_timestamp": true,
+    "compress_files": false,
+    "max_records_per_file": 100000,
+    "excel_formatting": true,
+    "csv_delimiter": ","
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "structured",
+    "output_file": null,
+    "max_file_size": 10485760,
+    "backup_count": 5,
+    "enable_console": true,
+    "enable_performance_metrics": true
+  },
+  "validation": {
+    "strict_mode": false,
+    "max_errors": 100,
+    "enable_warnings": true,
+    "custom_rules": {},
+    "weight_range": [0.5, 10.0],
+    "date_range_days": 365,
+    "required_columns": {
+      "growth_data": ["Farm", "House", "Date", "Stock", "Weight"],
+      "market_data": ["Date", "Price", "Capacity"]
+    }
+  },
+  "custom": {}
+}

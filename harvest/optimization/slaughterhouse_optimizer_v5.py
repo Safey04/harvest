@@ -32,6 +32,160 @@ def get_optimizer_function(optimizer_type):
         raise ValueError(f"Invalid optimizer_type: {optimizer_type}. Must be 'base', 'weight', or 'pct'.")
 
 
+def run_three_scenario_optimization(
+    df_input,
+    min_weight,
+    max_weight,
+    min_stock,
+    max_stock,
+    max_pct_per_house=0.3,
+    min_per_house=2000
+):
+    """
+    Run three-scenario optimization: base, weight expansion, and percentage escalation.
+    
+    Parameters:
+    - df_input: Input DataFrame
+    - min_weight: Minimum weight threshold
+    - max_weight: Maximum weight threshold
+    - min_stock: Minimum stock threshold
+    - max_stock: Maximum stock threshold
+    - max_pct_per_house: Maximum percentage per house
+    - min_per_house: Minimum per house
+    
+    Returns:
+    - dict: Results for each scenario with best plans
+    """
+    logger.info("Starting three-scenario slaughterhouse optimization")
+    
+    # Scenario 1: Base scenario
+    logger.info("Running base scenario...")
+    base_results, base_updated_dfs = SH_run_multiple_harvest_starts(
+        df_input=df_input,
+        optimizer_fn=SH_min_houses_uniform_extra_base,
+        min_weight=min_weight,
+        max_weight=max_weight,
+        min_stock=min_stock,
+        max_stock=max_stock,
+        max_pct_per_house=max_pct_per_house,
+        min_per_house=min_per_house
+    )
+    
+    best_base_date, best_base_plan_df, best_base_updated_df, sorted_net_meat_dict_base = get_best_harvest_stock_plan(base_results)
+    
+    # Scenario 2: Weight expansion scenario
+    logger.info("Running weight expansion scenario...")
+    
+    # Create SH_UN flag for unharvested houses from base scenario
+    if best_base_plan_df is not None and not best_base_plan_df.empty:
+        unique_pairs = df_input[['farm', 'house']].drop_duplicates()
+        harvested_pairs = best_base_plan_df[['farm', 'house']].drop_duplicates()
+        
+        # Find missing pairs (unharvested)
+        missing_pairs = unique_pairs.merge(harvested_pairs, on=['farm', 'house'], how='left', indicator=True)
+        missing_pairs = missing_pairs[missing_pairs['_merge'] == 'left_only'].drop(columns=['_merge'])
+        
+        # Create SH_UN flag
+        missing_set = set(zip(missing_pairs['farm'], missing_pairs['house']))
+        df_input['SH_UN'] = [
+            1 if (farm, house) in missing_set else 0
+            for farm, house in zip(df_input['farm'], df_input['house'])
+        ]
+    else:
+        df_input['SH_UN'] = 0
+    
+    # Run weight expansion scenario
+    weight_results, weight_updated_dfs = SH_run_multiple_harvest_starts(
+        df_input=df_input,
+        optimizer_fn=SH_min_houses_uniform_extra_base,  # Uses SH_UN flag for weight expansion
+        min_weight=min_weight,
+        max_weight=max_weight,
+        min_stock=min_stock,
+        max_stock=max_stock,
+        max_pct_per_house=max_pct_per_house,
+        min_per_house=min_per_house
+    )
+    
+    best_sc_weight_date, best_sc_weight_plan_df, best_sc_weight_updated_df, sorted_net_meat_dict_sc_weight = get_best_harvest_stock_plan(weight_results)
+    
+    # Scenario 3: Percentage escalation scenario
+    logger.info("Running percentage escalation scenario...")
+    
+    # Check for unfulfilled days in weight scenario
+    if best_sc_weight_plan_df is not None and not best_sc_weight_plan_df.empty:
+        daily = best_sc_weight_plan_df.groupby('date', as_index=False)['harvest_stock'].sum()
+        pending_days = pd.DataFrame({
+            'date': daily['date'],
+            'pending_SH': (daily['harvest_stock'] < min_stock).astype(int),
+            'pending_stock': (min_stock - daily['harvest_stock']).astype(int)
+        })
+        pending_days = pending_days[pending_days['pending_SH'] == 1]
+        
+        # Find houses that need NF flag
+        if not pending_days.empty:
+            pending_days_houses = best_sc_weight_plan_df.merge(
+                pending_days[['date', 'pending_SH']],
+                on='date',
+                how='inner'
+            )[['date', 'farm', 'house', 'pending_SH']]
+            
+            subset = pending_days_houses[pending_days_houses.index > 0]
+            unique_pairs_NF = subset[['farm', 'house']].drop_duplicates()
+            
+            if len(unique_pairs_NF) == 1:
+                NF_rows = subset
+                
+                # Add NF column
+                df_input['NF'] = 0
+                keys = set(zip(NF_rows["date"], NF_rows["farm"], NF_rows["house"]))
+                df_input.loc[
+                    df_input.set_index(["date", "farm", "house"]).index.isin(keys),
+                    "NF"
+                ] = 1
+            else:
+                df_input['NF'] = 0
+        else:
+            df_input['NF'] = 0
+    else:
+        df_input['NF'] = 0
+    
+    # Run percentage escalation scenario
+    pct_results, pct_updated_dfs = SH_run_multiple_harvest_starts(
+        df_input=df_input,
+        optimizer_fn=SH_min_houses_uniform_extra_base,  # Uses NF flag for percentage escalation
+        min_weight=min_weight,
+        max_weight=max_weight,
+        min_stock=min_stock,
+        max_stock=max_stock,
+        max_pct_per_house=max_pct_per_house,
+        min_per_house=min_per_house
+    )
+    
+    best_sc_pct_date, best_sc_pct_plan_df, best_sc_pct_updated_df, sorted_net_meat_dict_sc_pct = get_best_harvest_stock_plan(pct_results)
+    
+    # Return results for all scenarios
+    return {
+        'base': {
+            'date': best_base_date,
+            'plan_df': best_base_plan_df,
+            'updated_df': best_base_updated_df,
+            'summary': sorted_net_meat_dict_base
+        },
+        'weight': {
+            'date': best_sc_weight_date,
+            'plan_df': best_sc_weight_plan_df,
+            'updated_df': best_sc_weight_updated_df,
+            'summary': sorted_net_meat_dict_sc_weight
+        },
+        'pct': {
+            'date': best_sc_pct_date,
+            'plan_df': best_sc_pct_plan_df,
+            'updated_df': best_sc_pct_updated_df,
+            'summary': sorted_net_meat_dict_sc_pct
+        }
+    }
+
+
 def add_house_dates_columns(df, duration_days=40, max_harvest_date=None):
     """
     Adds 'start_date', 'end_date', 'last_date', and 'max_harvest_date' columns to the input DataFrame
@@ -191,6 +345,7 @@ def apply_harvest_updates(df_full, harvest_df):
 
             if new_stock_rounded > 0:
                 df.at[idx, 'expected_stock'] = new_stock_rounded
+                df.at[idx, 'expected_mortality'] = abs(int(round(prev_stock - new_stock_rounded)))
                 prev_stock = new_stock
             else:
                 df = df.drop(index=idx)
@@ -229,7 +384,7 @@ def apply_harvest_updates_only_once(df_full, harvest_df):
 
         for idx, row in future_rows.iterrows():
             mortality_rate = row.get('expected_mortality_rate', 0)
-            new_stock = prev_stock * (1 - mortality_rate) * 0.97  # Adjust for culls
+            new_stock = prev_stock * (1 - mortality_rate)
             new_stock_rounded = int(round(new_stock))
 
             if new_stock_rounded > 0:
