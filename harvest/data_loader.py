@@ -174,12 +174,10 @@ class DataLoader:
         feed_consumption_cumulative = [x/1000 for x in feed_consumption_cumulative]
 
         #add feed_consumption_cumulative column
-        df['feed_consumption_cumulative'] = df['age'].apply(lambda x: feed_consumption_cumulative[x-1])
+        df['feed_consumption_per_bird'] = df['age'].apply(lambda x: feed_consumption_cumulative[x-1])
 
         #multiply by expected_stock
-        df['feed_consumption'] = df['expected_stock'] * df['feed_consumption_cumulative']
-
-        df = df.drop(columns=['feed_consumption_cumulative'])
+        df['feed_consumption'] = df['expected_stock'] * df['feed_consumption_per_bird']
         
         return df
 
@@ -207,13 +205,29 @@ class DataLoader:
     def add_profit_loss_column(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Add meat loss column to the DataFrame.
+        For days where age > 20 and profit_loss would be 0 due to fillna (first day in group),
+        calculate profit_loss as (current_expected_stock + expected_mortality) * avg_weight * price
         """
         df = df.copy()
         # Calculate meat loss for each farm-house group (day - next day )
 
         stock_loss = df.groupby(['farm', 'house'])['expected_stock'].diff().fillna(0).abs().astype(int)
-
+        
+        # Calculate initial profit_loss
         df['profit_loss'] = stock_loss * df["avg_weight"].fillna(0) * df['price']
+        
+        # Handle special case: age > 20 and profit_loss = 0 (due to fillna)
+        # This occurs on the first day of each farm-house group where diff() returns NaN
+        condition = (df['age'] > 20) & (df['profit_loss'] == 0)
+        
+        if condition.any():
+            # For these cases, calculate profit_loss as (expected_stock + expected_mortality) * avg_weight * price
+            df.loc[condition, 'profit_loss'] = (
+                df.loc[condition, 'expected_mortality'] * 
+                df.loc[condition, 'avg_weight'] * 
+                df.loc[condition, 'price']
+            )
+        
         return df
 
     def adjust_expected_stock(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -241,16 +255,22 @@ class DataLoader:
         prioritized_counts = df.groupby(['farm', 'house'])['age'].transform(lambda s: s.between(28, 40).sum())
 
         # Rank by total_profit (descending) within each group; 'first' preserves current order for ties
+        # Handle NaN and infinite values before ranking
+        df_clean = df.copy()
+        df_clean['profit_per_bird'] = df_clean['profit_per_bird'].fillna(-999999).replace([float('inf'), -float('inf')], [-999999, -999999])
+        
         prioritized_rank = (
-            df.loc[age_priority_mask]
+            df_clean.loc[age_priority_mask]
               .groupby(['farm', 'house'])['profit_per_bird']
               .rank(method='first', ascending=False)
+              .fillna(999999)  # Fill any remaining NaN ranks with a high number (low priority)
               .astype('int64')
         )
         non_prioritized_rank = (
-            df.loc[~age_priority_mask]
+            df_clean.loc[~age_priority_mask]
               .groupby(['farm', 'house'])['profit_per_bird']
               .rank(method='first', ascending=False)
+              .fillna(999999)  # Fill any remaining NaN ranks with a high number (low priority)
               .astype('int64')
         )
 
@@ -379,3 +399,25 @@ class DataLoader:
         ready_df.to_csv('ready_df.csv', index=False)
         
         return ready_df, removed_df
+
+    def adjust_priority_column(self, df: pd.DataFrame, feed_price: float, file_path_price: str = 'price.csv') -> pd.DataFrame:
+        """
+        Adjust priority column to ensure it is unique.
+        """
+        df = df.copy().drop(columns=["feed_consumption_per_bird","feed_consumption","price","feed_cost","total_profit","profit_per_bird","profit_loss"])
+
+        # Add feed consumption column
+        ready_df = self.add_feed_consumption_column(df)
+
+        # Add price column
+        ready_df = self.add_price_column(ready_df, file_path_price)
+
+        ready_df = self.add_total_profit_column(ready_df, feed_price)
+
+        # Add meat loss column
+        ready_df = self.add_profit_loss_column(ready_df)
+        
+        # Add priority column
+        ready_df = self.add_priority_column(ready_df)
+
+        return ready_df.drop_duplicates(subset=['farm', 'house', 'date'],keep='last')

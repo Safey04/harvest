@@ -112,6 +112,7 @@ class SolutionProcessor:
                     'harvest_stock': harvested,
                     'net_meat': harvested * row['avg_weight'],
                     'harvest_type': harvest_type,
+                    'profit_per_bird': row['profit_per_bird'],
                 }
                 # Include priority if available in the source data
                 if 'priority' in row.index:
@@ -232,6 +233,7 @@ class SolutionProcessor:
             for farm, house in common_indices:
                 mask = (df['farm'] == farm) & (df['house'] == house)
                 df.loc[mask, 'expected_stock'] -= harvest_mapping.loc[(farm, house)]
+
         
         # Remove farm/house combinations with zero or negative stock
         zero_stock_mask = df['expected_stock'] <= 0

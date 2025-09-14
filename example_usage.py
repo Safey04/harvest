@@ -31,7 +31,8 @@ def main():
         max_stock=100000,
         max_pct_per_house=1.0,
         tolerance_step=100,
-        max_tolerance=1000
+        max_tolerance=1000,
+        optimizer_type="profit"  # Options: "weight", "profit"
     )
     
     service_config = ServiceConfig(

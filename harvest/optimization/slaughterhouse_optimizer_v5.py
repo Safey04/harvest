@@ -591,7 +591,7 @@ def SH_run_multiple_harvest_starts(df_input,
     return results_by_start_day, all_updated_dfs
 
 
-def get_best_harvest_stock_plan(plan_dict):
+def get_best_harvest_stock_plan(plan_dict,optimizer_type: str = "weight"):
     """
     Finds the best plan (by total harvested stock) from a dict with date keys and {'harvest', 'updated_df'} values.
 
@@ -614,7 +614,12 @@ def get_best_harvest_stock_plan(plan_dict):
     for date_key, data in plan_dict.items():
         harvest_df = data.get('harvest')
         if isinstance(harvest_df, pd.DataFrame) and not harvest_df.empty and 'harvest_stock' in harvest_df.columns:
-            total_stock = harvest_df['harvest_stock'].sum()
+            if optimizer_type == "weight":
+                total_stock = (harvest_df['harvest_stock']*harvest_df['avg_weight']).sum()
+            elif optimizer_type == "profit":
+                total_stock = (harvest_df['profit_per_bird'] * harvest_df['harvest_stock']).sum()
+            else:
+                total_stock = harvest_df['harvest_stock'].sum()
             summary[date_key] = total_stock
 
     if not summary:

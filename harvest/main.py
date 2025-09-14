@@ -4,7 +4,7 @@ Main orchestrator for the harvest optimization system.
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any, Callable
 import logging
 import os
 from datetime import datetime, timedelta
@@ -345,7 +345,9 @@ class HarvestOptimizer:
         max_weight: float = 2.2,
         bypass_capacity: int = 0,
         bypass_constraint: int = 0,
-        valid_days: pd.DataFrame = None
+        valid_days: pd.DataFrame = None,
+        optimizer_type: str = "weight"
+
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Run iterative market harvest (backward from last date).
@@ -409,12 +411,20 @@ class HarvestOptimizer:
             # Build and solve market optimization, honoring per-day remaining capacity when provided
             problem = None
             if valid_days is None:
-                problem = self.model_builder.build_market_model(
+                if optimizer_type == "weight":
+                    problem = self.model_builder.build_market_model(
+                        df_day,
+                        max_total_stock=max_total_stock,
+                        min_total_stock=min_total_stock,
+                        max_pct_per_house=max_pct_per_house,
+                        bypass_capacity=bypass_capacity
+                    )
+                else:
+                    problem = self.model_builder.build_profit_market_model(
                     df_day,
                     max_total_stock=max_total_stock,
                     min_total_stock=min_total_stock,
                     max_pct_per_house=max_pct_per_house,
-                    bypass_capacity=bypass_capacity
                 )
             else:
                 vd_today = valid_days.loc[valid_days['date'] == current_date] if 'date' in valid_days.columns else pd.DataFrame()
@@ -427,14 +437,22 @@ class HarvestOptimizer:
                             continue
                         if remaining_capacity_value > 0:
                             logger.info(f"Remaining capacity for {current_date.date()}")
-                            problem = self.model_builder.build_market_model(
-                                df_day,
-                                max_total_stock=remaining_capacity_value,
-                                min_total_stock=2000,
-                                max_pct_per_house=max_pct_per_house,
-                                capacity_penalty=1000000,
-                                bypass_capacity=bypass_capacity
-                            )
+                            if optimizer_type == "weight":
+                                problem = self.model_builder.build_market_model(
+                                    df_day,
+                                    max_total_stock=remaining_capacity_value,
+                                    min_total_stock=2000,
+                                    max_pct_per_house=max_pct_per_house,
+                                    capacity_penalty=1000000,
+                                    bypass_capacity=bypass_capacity
+                                )
+                            else:
+                                problem = self.model_builder.build_profit_market_model(
+                                    df_day,
+                                    max_total_stock=remaining_capacity_value,
+                                    min_total_stock=2000,
+                                    max_pct_per_house=max_pct_per_house,
+                                )
 
             
             if problem is None:
@@ -544,7 +562,12 @@ class HarvestOptimizer:
         valid_days: pd.DataFrame = None,
         unharvested_stock: pd.DataFrame = None,
         bypass_capacity: int = 0,
-        bypass_constraint: int = 0
+        bypass_constraint: int = 0,
+        optimizer_type: str = "weight",
+        adjust_priority: Callable = None,
+        feed_price: float = None,
+        input_file_path_price: str = None
+
     ) -> Tuple[Dict[Any, Dict[str, pd.DataFrame]], Dict[Any, pd.DataFrame]]:
         """
         Run a reverse-sweep over the market window by progressively truncating the
@@ -554,9 +577,14 @@ class HarvestOptimizer:
         in results_by_start_day has keys 'harvest' and 'updated_df'.
         """
         df_base = df_input.copy()
+        
             
         df_flagged = self.model_builder.flag_ready_avg_weight(df_base, min_weight, max_weight, harvest_type)
         df_ready = df_flagged[(df_flagged['ready_Market'] == 1)].copy()
+        
+        df_ready = adjust_priority(df_ready, feed_price, input_file_path_price)
+        df_ready.to_csv(f"df_ready_adjusted_priority.csv", index=False)
+        
             
 
         df_ready['date'] = pd.to_datetime(df_ready['date'])
@@ -593,7 +621,8 @@ class HarvestOptimizer:
                 max_weight=max_weight,
                 bypass_capacity=bypass_capacity,
                 bypass_constraint=bypass_constraint,
-                valid_days=valid_days if valid_days is not None else None
+                valid_days=valid_days if valid_days is not None else None,
+                optimizer_type=optimizer_type
             )
             
             results_by_start_day[current_max_date.date()] = {
@@ -606,7 +635,7 @@ class HarvestOptimizer:
         
         return results_by_start_day, all_updated_dfs
     
-    def get_best_net_meat_plan(self, plan_dict: Dict) -> Tuple[Any, pd.DataFrame, pd.DataFrame, Dict]:
+    def get_best_net_meat_plan(self, plan_dict: Dict,optimizer_type: str = None) -> Tuple[Any, pd.DataFrame, pd.DataFrame, Dict]:
         """
         Find the best plan by total net meat using the new V5.1 optimizer.
         
@@ -618,7 +647,7 @@ class HarvestOptimizer:
         """
         from .optimization.slaughterhouse_optimizer_v5 import get_best_harvest_stock_plan
         
-        return get_best_harvest_stock_plan(plan_dict)
+        return get_best_harvest_stock_plan(plan_dict, optimizer_type)
     
     def calculate_culls_allocation(
         self, 
@@ -814,6 +843,9 @@ class PoultryHarvestOptimizationService:
             
             best_sh_updated.to_csv("best_sh_updated.csv", index=False)
             best_sh_plan.to_csv("best_sh_plan.csv", index=False)
+            best_sh_updated = self.optimizer.data_loader.adjust_priority_column(best_sh_updated, feed_price, input_file_path_price)
+            best_sh_updated.to_csv("best_sh_updated_adjusted_priority.csv", index=False)
+
             
             # Apply propagate_harvest to base_sh_updated for all scenarios
             base_sh_updated = best_sh_updated.copy()
@@ -854,10 +886,15 @@ class PoultryHarvestOptimizationService:
                 harvest_type='Market',
                 max_pct_per_house=self.market_config.max_pct_per_house,
                 min_weight=self.market_config.min_weight,
-                max_weight=self.market_config.max_weight
+                max_weight=self.market_config.max_weight,
+                optimizer_type=self.market_config.optimizer_type,
+                adjust_priority=self.optimizer.data_loader.adjust_priority_column,
+                feed_price=feed_price,
+                input_file_path_price=input_file_path_price
+
             )
 
-            M_best_date, market_harvest, market_updated, _ = self.optimizer.get_best_net_meat_plan(results_by_start_day_M)
+            M_best_date, market_harvest, market_updated, _ = self.optimizer.get_best_net_meat_plan(results_by_start_day_M,optimizer_type=self.market_config.optimizer_type)
 
             market_updated_pairs = market_updated[['farm', 'house']].drop_duplicates()
             market_harvest_pairs = market_harvest[['farm', 'house']].drop_duplicates()
@@ -917,6 +954,9 @@ class PoultryHarvestOptimizationService:
             combined_unharvested = pd.concat([ready_df_not_in_unharvested, market_updated])
             age_expansion_unharvested = pd.concat([ready_df_not_in_unharvested, market_updated])
 
+            market_adjusted_priority = self.optimizer.data_loader.adjust_priority_column(combined_unharvested, feed_price, input_file_path_price)
+            market_adjusted_priority.to_csv("market_adjusted_priority.csv", index=False)
+
         # Step 4: Calculate culls allocation
         
 
@@ -951,7 +991,7 @@ class PoultryHarvestOptimizationService:
 
             # Run age expansion optimization for unharvested stock (+3 days max_harvest_age)
             age_expansion_market_harvest, age_expansion_updated_stock = self._run_unharvested_age_expansion_market_optimization(
-                age_expansion_updated_stock_initial, age_expansion_unharvested, best_sh_plan, removed_df, culls_plan, output_dir
+                age_expansion_updated_stock_initial, age_expansion_unharvested, best_sh_plan, removed_df, culls_plan, feed_price, input_file_path_price, output_dir
             )
 
             # Apply propagate_harvest to age expansion results
@@ -959,7 +999,7 @@ class PoultryHarvestOptimizationService:
 
             # Run recursive optimization (separate from expanded)
             recursive_market_harvest, recursive_updated_stock = self._run_recursive_market_optimization(
-                recursive_updated_stock_initial, recursive_unharvested
+                recursive_updated_stock_initial, recursive_unharvested, feed_price, input_file_path_price
             )
 
             # Apply propagate_harvest to recursive results
@@ -967,7 +1007,7 @@ class PoultryHarvestOptimizationService:
 
             # Run expanded optimization (separate from recursive)
             expanded_market_harvest, expanded_updated_stock = self._run_expanded_market_optimization(
-                expanded_updated_stock_initial, expanded_unharvested, expanded_sh_plan, culls_plan, output_dir
+                expanded_updated_stock_initial, expanded_unharvested, expanded_sh_plan, culls_plan, feed_price, input_file_path_price, output_dir
             )
 
             # Apply propagate_harvest to expanded results
@@ -976,7 +1016,7 @@ class PoultryHarvestOptimizationService:
             
             # Run combined recursive + expanded optimization with dynamic capacity
             combined_market_harvest, combined_updated_stock = self._run_combined_market_optimization(
-                combined_updated_stock_initial, combined_unharvested, combined_sh_plan, culls_plan, removed_df, output_dir
+                combined_updated_stock_initial, combined_unharvested, combined_sh_plan, culls_plan, removed_df, feed_price, input_file_path_price, output_dir
             )
 
             # Apply propagate_harvest to combined results
@@ -1115,6 +1155,8 @@ class PoultryHarvestOptimizationService:
         initial_unharvested_stock: pd.DataFrame,
         sh_harvest: pd.DataFrame,
         culls_harvest: pd.DataFrame,
+        feed_price: float,
+        input_file_path_price: str,
         output_dir: str
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
@@ -1245,6 +1287,8 @@ class PoultryHarvestOptimizationService:
             market_daily = initial_market_harvest.groupby('date')['harvest_stock'].sum()
             for date, allocation in market_daily.items():
                 daily_allocations[date] = daily_allocations.get(date, 0) + allocation
+        # Initialize to_remove as empty list
+        to_remove_dates = []
         
         # Filter expanded stock to only include days where we have remaining capacity
         if daily_allocations:
@@ -1266,8 +1310,6 @@ class PoultryHarvestOptimizationService:
             # Prevent negatives
             daily_df_full['remaining_capacity'] = daily_df_full['remaining_capacity'].clip(lower=0)
 
-            # Save diagnostics
-
             # Use all days (missing days implicitly have full remaining capacity)
             valid_days = daily_df_full
 
@@ -1285,14 +1327,30 @@ class PoultryHarvestOptimizationService:
             valid_days = pd.DataFrame({'date': pd.date_range(horizon_start, horizon_end, freq='D')})
             valid_days['existing_allocation'] = 0
             valid_days['remaining_capacity'] = self.market_config.max_stock
-            valid_days = valid_days[valid_days['remaining_capacity'] > 0].copy()
-    
+            # Calculate tolerance bounds for removing dates near max capacity
+            tolerance = 0.05 * self.market_config.max_stock
+            lower_bound = self.market_config.max_stock - tolerance
+            upper_bound = self.market_config.max_stock + tolerance
             
-
+            # Find dates to remove (those with allocation between bounds)
+            to_remove_mask = (
+                (valid_days['existing_allocation'] >= lower_bound) & 
+                (valid_days['existing_allocation'] <= upper_bound)
+            )
+            to_remove_dates = valid_days[to_remove_mask]['date'].tolist()
+            
+            valid_days = valid_days[valid_days['remaining_capacity'] > 0].copy()
+            
             
         if ready_expanded_stock.empty:
             logger.info("No stock ready after capacity filtering")
             return pd.DataFrame(), initial_unharvested_stock
+
+        ready_expanded_stock = self.optimizer.data_loader.adjust_priority_column(ready_expanded_stock, feed_price, input_file_path_price)
+        # Remove dates that are near capacity limits
+        if to_remove_dates:
+            ready_expanded_stock = ready_expanded_stock[~ready_expanded_stock['date'].isin(to_remove_dates)]
+        ready_expanded_stock.to_csv(f"weight_expanded_stock_adjusted_priority.csv", index=False)
         
         # Step 5: Run market optimization with expanded stock and capacity-aware limits
         expanded_harvest, remaining_unharvested = self.optimizer.run_iterative_market_harvest(
@@ -1304,7 +1362,9 @@ class PoultryHarvestOptimizationService:
             max_pct_per_house=self.market_config.max_pct_per_house,
             min_weight=expanded_min_weight,
             max_weight=expanded_max_weight,
-            valid_days=valid_days
+            valid_days=valid_days,
+            optimizer_type=self.market_config.optimizer_type
+
         )
         
         if not expanded_harvest.empty:
@@ -1319,6 +1379,8 @@ class PoultryHarvestOptimizationService:
         self, 
         initial_market_harvest: pd.DataFrame, 
         unharvested_stock: pd.DataFrame,
+        feed_price: float,
+        input_file_path_price: str,
         concat: bool = True,
         combined: bool = False
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -1387,6 +1449,8 @@ class PoultryHarvestOptimizationService:
                 max_tolerance=self.market_config.max_tolerance
             )
             
+            current_unharvested = self.optimizer.data_loader.adjust_priority_column(current_unharvested, feed_price, input_file_path_price)
+            current_unharvested.to_csv(f"capacity_increased_stock_adjusted_priority_iteration{iteration}.csv", index=False)
             # Run market optimization on current unharvested stock
             results_by_start_day, _ = self.optimizer.run_market_reverse_sweep(
                 current_unharvested,
@@ -1396,10 +1460,15 @@ class PoultryHarvestOptimizationService:
                 max_tolerance=iteration_config.max_tolerance,
                 max_pct_per_house=iteration_config.max_pct_per_house,
                 min_weight=iteration_config.min_weight,
-                max_weight=iteration_config.max_weight
+                max_weight=iteration_config.max_weight,
+                optimizer_type=iteration_config.optimizer_type,
+                adjust_priority=self.optimizer.data_loader.adjust_priority_column,
+                feed_price=feed_price,
+                input_file_path_price=input_file_path_price
+
             )
             
-            best_date, additional_harvest, updated_unharvested, _ = self.optimizer.get_best_net_meat_plan(results_by_start_day)
+            best_date, additional_harvest, updated_unharvested, _ = self.optimizer.get_best_net_meat_plan(results_by_start_day,optimizer_type=iteration_config.optimizer_type)
 
             if updated_unharvested is not None and not updated_unharvested.empty:
                 updated_unharvested.to_csv(f"updated_unharvested_{iteration}.csv", index=False)
@@ -1459,11 +1528,12 @@ class PoultryHarvestOptimizationService:
         sh_harvest: pd.DataFrame,
         culls_harvest: pd.DataFrame,
         removed_df: pd.DataFrame,
+        feed_price: float,
+        input_file_path_price: str,
         output_dir: str
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Run expanded market optimization with wider weight range and capacity checking.
-        Runs in parallel with recursive optimization from the same base unharvested stock.
+        Run combined market optimization: first age expansion, then iterative market harvest.
         
         Args:
             initial_market_harvest: Initial market harvest (before recursive optimization)
@@ -1475,14 +1545,14 @@ class PoultryHarvestOptimizationService:
         Returns:
             Tuple of (additional market harvest, remaining unharvested stock)
         """
-        logger.info("Starting expanded market optimization (parallel to recursive)...")
+        logger.info("Starting combined market optimization: age expansion first, then iterative harvest...")
         
         if initial_unharvested_stock.empty:
-            logger.info("No unharvested stock - skipping expanded optimization")
+            logger.info("No unharvested stock - skipping combined optimization")
             return pd.DataFrame(), initial_unharvested_stock
         
         if self.market_config is None:
-            logger.info("No market config - skipping expanded optimization")
+            logger.info("No market config - skipping combined optimization")
             return pd.DataFrame(), initial_unharvested_stock
         
         # Step 1: Expand market weight range by ±0.05
@@ -1491,11 +1561,35 @@ class PoultryHarvestOptimizationService:
         
         logger.info(f"Expanded weight range: {expanded_min_weight:.2f} - {expanded_max_weight:.2f} (original: {self.market_config.min_weight:.2f} - {self.market_config.max_weight:.2f})")
         
-        # Step 2: Refetch data for farm/house combinations in unharvested stock with expanded weight range
-        # We need to get the original data for these farm/house combinations and reapply expanded weight filtering
+        # Step 2: Run age expansion optimization first with expanded weight range
+        logger.info("Step 1: Running age expansion optimization with expanded weight range...")
+        age_expansion_harvest, age_expansion_unharvested = self._run_unharvested_age_expansion_market_optimization(
+            initial_market_harvest,
+            initial_unharvested_stock,
+            sh_harvest,
+            removed_df,
+            culls_harvest,
+            feed_price,
+            input_file_path_price,
+            output_dir,
+            age_expansion_days=3,
+            min_weight=expanded_min_weight,
+            max_weight=expanded_max_weight,
+            combined=True
+
+        )
+        
+        # Step 3: Run iterative market harvest on remaining unharvested stock
+        logger.info("Step 2: Running iterative market harvest on remaining unharvested stock...")
+        
+        if age_expansion_unharvested.empty:
+            logger.info("No remaining unharvested stock after age expansion - returning age expansion results")
+            return age_expansion_harvest, age_expansion_unharvested
+        
+        # Refetch data for farm/house combinations in remaining unharvested stock with expanded weight range
         if hasattr(self.optimizer, 'data_loader') and hasattr(self.optimizer.data_loader, 'last_preprocessed_data'):
-            # Get farm/house combinations from unharvested stock
-            farm_house_combinations = initial_unharvested_stock[['farm', 'house']].drop_duplicates()
+            # Get farm/house combinations from remaining unharvested stock
+            farm_house_combinations = age_expansion_unharvested[['farm', 'house']].drop_duplicates()
             
             # Get the original preprocessed data 
             original_data = self.optimizer.data_loader.last_preprocessed_data.copy()
@@ -1508,17 +1602,19 @@ class PoultryHarvestOptimizationService:
             )
             
             # Calculate total allocated stock per farm/house from all harvest types
-            # Need to get all harvest results that have been allocated so far
             all_allocated_harvests = []
             
             # Add slaughterhouse harvest if it exists
             if sh_harvest is not None and not sh_harvest.empty:
                 all_allocated_harvests.append(sh_harvest[['farm', 'house', 'harvest_stock']])
             
+            # Add culls harvest if it exists
+            if culls_harvest is not None and not culls_harvest.empty:
+                all_allocated_harvests.append(culls_harvest[['farm', 'house', 'harvest_stock']])
             
-            # Add initial market harvest if it exists
-            if not initial_market_harvest.empty:
-                all_allocated_harvests.append(initial_market_harvest[['farm', 'house', 'harvest_stock']])
+            # Add age expansion harvest if it exists
+            if not age_expansion_harvest.empty:
+                all_allocated_harvests.append(age_expansion_harvest[['farm', 'house', 'harvest_stock']])
             
             # Calculate total allocated stock per farm/house
             if all_allocated_harvests:
@@ -1561,7 +1657,7 @@ class PoultryHarvestOptimizationService:
             # Fallback: use the unharvested stock directly with expanded flagging
             logger.warning("Could not access original data, using unharvested stock directly")
             expanded_flagged_stock = self.optimizer.model_builder.flag_ready_avg_weight(
-                initial_unharvested_stock.copy(), 
+                age_expansion_unharvested.copy(), 
                 expanded_min_weight, 
                 expanded_max_weight, 
                 'Market'
@@ -1569,21 +1665,16 @@ class PoultryHarvestOptimizationService:
             ready_expanded_stock = expanded_flagged_stock[expanded_flagged_stock['ready_Market'] == 1].copy()
         
         if ready_expanded_stock.empty:
-            logger.info("No stock ready with expanded weight range")
-            return pd.DataFrame(), initial_unharvested_stock
+            logger.info("No stock ready with expanded weight range for iterative harvest")
+            return age_expansion_harvest, age_expansion_unharvested
         
-        logger.info(f"Found {ready_expanded_stock['expected_stock'].sum()} stock ready with expanded weight range")
+        logger.info(f"Found {ready_expanded_stock['expected_stock'].sum()} stock ready with expanded weight range for iterative harvest")
         
-        # Step 3: Check for additional harvest opportunities
-        # The expanded optimization should find new opportunities, not just fill existing capacity gaps
-        logger.info("Expanded optimization will look for additional harvest opportunities beyond existing plans")
-        
-        # Step 4: Check daily capacity constraints before optimization
-        # Calculate existing daily allocations from all harvest types
+        # Check daily capacity constraints before optimization
         daily_allocations = {}
         
-        if not initial_market_harvest.empty:
-            market_daily = initial_market_harvest.groupby('date')['harvest_stock'].sum()
+        if not age_expansion_harvest.empty:
+            market_daily = age_expansion_harvest.groupby('date')['harvest_stock'].sum()
             for date, allocation in market_daily.items():
                 daily_allocations[date] = daily_allocations.get(date, 0) + allocation
         
@@ -1607,12 +1698,9 @@ class PoultryHarvestOptimizationService:
             daily_df_full.loc[
                 daily_df_full['existing_allocation'] >= self.market_config.max_stock - 3000,
                 'remaining_capacity'
-            ] = 50000
+            ] = 80000
             # Prevent negatives
             daily_df_full['remaining_capacity'] = daily_df_full['remaining_capacity'].clip(lower=0)
-            
-
-            
 
             # Use all days (missing days implicitly have full remaining capacity)
             valid_days = daily_df_full
@@ -1620,10 +1708,10 @@ class PoultryHarvestOptimizationService:
             if not valid_days.empty:
                 # Filter ready_expanded_stock to only valid days
                 ready_expanded_stock = ready_expanded_stock[ready_expanded_stock['date'].isin(valid_days['date'])].copy()
-                logger.info(f"Filtered to {len(valid_days)} days with remaining capacity for expanded optimization")
+                logger.info(f"Filtered to {len(valid_days)} days with remaining capacity for iterative harvest")
             else:
-                logger.info("No days with remaining capacity - skipping expanded optimization")
-                return pd.DataFrame(), initial_unharvested_stock
+                logger.info("No days with remaining capacity - skipping iterative harvest")
+                return age_expansion_harvest, age_expansion_unharvested
         else:
             # No prior allocations; create a full calendar from the expanded stock horizon with full capacity
             horizon_start = ready_expanded_stock['date'].min()
@@ -1633,13 +1721,15 @@ class PoultryHarvestOptimizationService:
             valid_days['remaining_capacity'] = self.market_config.max_stock
             valid_days = valid_days[valid_days['remaining_capacity'] > 0].copy()
 
-            
         if ready_expanded_stock.empty:
-            logger.info("No stock ready after capacity filtering")
-            return pd.DataFrame(), initial_unharvested_stock
+            logger.info("No stock ready after capacity filtering for iterative harvest")
+            return age_expansion_harvest, age_expansion_unharvested
+
+        ready_expanded_stock = self.optimizer.data_loader.adjust_priority_column(ready_expanded_stock, feed_price, input_file_path_price)
+        ready_expanded_stock.to_csv(f"combined_stock_adjusted_priority.csv", index=False)
         
-        # Step 5: Run market optimization with expanded stock and capacity-aware limits
-        expanded_harvest, remaining_unharvested = self.optimizer.run_iterative_market_harvest(
+        # Run iterative market harvest with expanded stock and capacity-aware limits
+        iterative_harvest, remaining_unharvested = self.optimizer.run_iterative_market_harvest(
             ready_expanded_stock,
             max_total_stock=100000,
             min_total_stock=100000,
@@ -1648,30 +1738,19 @@ class PoultryHarvestOptimizationService:
             max_pct_per_house=self.market_config.max_pct_per_house,
             min_weight=expanded_min_weight,
             max_weight=expanded_max_weight,
-            valid_days=valid_days
+            valid_days=valid_days,
+            optimizer_type=self.market_config.optimizer_type
         )
 
-
-        if not expanded_harvest.empty:
-            logger.info(f"Expanded optimization harvested {expanded_harvest['harvest_stock'].sum()} additional stock")
-            expanded_harvest = pd.concat([initial_market_harvest, expanded_harvest], ignore_index=True)
+        # Combine age expansion and iterative harvest results
+        if not iterative_harvest.empty:
+            logger.info(f"Iterative harvest harvested {iterative_harvest['harvest_stock'].sum()} additional stock")
+            combined_harvest = pd.concat([age_expansion_harvest, iterative_harvest], ignore_index=True)
         else:
-            logger.info("No additional harvest from expanded optimization")
-        
-        remaining_unharvested.to_csv("remaining_unharvested.csv", index=False)
-        
-        #pass to age expansion
-        expanded_harvest, remaining_unharvested = self._run_unharvested_age_expansion_market_optimization(
-            expanded_harvest,
-            remaining_unharvested,
-            sh_harvest,
-            removed_df,
-            culls_harvest,
-            output_dir,
-            age_expansion_days=3
-        )
+            logger.info("No additional harvest from iterative optimization")
+            combined_harvest = age_expansion_harvest
 
-        return expanded_harvest, remaining_unharvested
+        return combined_harvest, remaining_unharvested
             
     def _run_unharvested_age_expansion_market_optimization(
         self, 
@@ -1680,8 +1759,13 @@ class PoultryHarvestOptimizationService:
         best_sh_plan: pd.DataFrame,
         removed_df: pd.DataFrame,
         culls_plan: pd.DataFrame,
+        feed_price: float,
+        input_file_path_price: str,
         output_dir: str,
-        age_expansion_days: int = 3
+        age_expansion_days: int = 3,
+        min_weight: float = None,
+        max_weight: float = None,
+        combined: bool = False
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Run market optimization on unharvested stock with sequential age expansion.
@@ -1694,6 +1778,8 @@ class PoultryHarvestOptimizationService:
             culls_plan: Culls plan (unused in current implementation)
             output_dir: Output directory for intermediate exports
             age_expansion_days: Maximum additional days to expand (default 3)
+            min_weight: Minimum weight constraint (if None, uses market_config.min_weight)
+            max_weight: Maximum weight constraint (if None, uses market_config.max_weight)
             
         Returns:
             Tuple of (cumulative harvest, final unharvested stock)
@@ -1703,6 +1789,12 @@ class PoultryHarvestOptimizationService:
         if unharvested_stock.empty:
             logger.info("No unharvested stock - skipping age expansion optimization")
             return initial_market_harvest, unharvested_stock
+
+        # Use provided weight constraints or fall back to market config
+        effective_min_weight = min_weight if min_weight is not None else self.market_config.min_weight
+        effective_max_weight = max_weight if max_weight is not None else self.market_config.max_weight
+        
+        logger.info(f"Using weight range: {effective_min_weight:.2f} - {effective_max_weight:.2f}")
 
         # Initialize tracking variables
         cumulative_harvest = pd.concat([initial_market_harvest, best_sh_plan, culls_plan], ignore_index=True)
@@ -1731,11 +1823,11 @@ class PoultryHarvestOptimizationService:
             # Combine with current unharvested stock
             combined_stock = pd.concat([df_age_expanded, current_unharvested], ignore_index=True)
             
-            # Apply weight range flagging
+            # Apply weight range flagging with effective weight constraints
             flagged_stock = self.optimizer.model_builder.flag_ready_avg_weight(
                 combined_stock, 
-                self.market_config.min_weight, 
-                self.market_config.max_weight, 
+                effective_min_weight, 
+                effective_max_weight, 
                 'Market'
             )
             
@@ -1758,12 +1850,17 @@ class PoultryHarvestOptimizationService:
             
             # Run optimization for this iteration
             best_harvest_df, best_updated_df = self._run_iteration_optimization(
-                ready_stock, valid_days, expansion_day, output_dir
+                ready_stock, valid_days, expansion_day, output_dir, 
+                feed_price, input_file_path_price,
+                optimizer_type=self.market_config.optimizer_type,
+                min_weight=effective_min_weight,
+                max_weight=effective_max_weight,
+                combined=combined
             )
             
             if best_harvest_df is not None and not best_harvest_df.empty:
-                cumulative_harvest = pd.concat([cumulative_harvest, best_harvest_df], ignore_index=True)
-                current_unharvested = best_updated_df.copy()
+                cumulative_harvest = pd.concat([cumulative_harvest, best_harvest_df]).drop_duplicates(subset=['farm', 'house', 'date', 'age','harvest_type','harvest_stock'], ignore_index=True)
+                current_unharvested = best_updated_df.copy().drop_duplicates(subset=['farm', 'house', 'date', 'age'])
                 logger.info(f"Iteration {expansion_day}: Added {best_harvest_df['harvest_stock'].sum()} stock")
             else:
                 logger.info(f"Iteration {expansion_day}: No additional harvest found")
@@ -1868,13 +1965,26 @@ class PoultryHarvestOptimizationService:
         combined_stock: pd.DataFrame, 
         valid_days: pd.DataFrame, 
         expansion_day: int, 
-        output_dir: str
+        output_dir: str,
+        feed_price: float,
+        input_file_path_price: str,
+        optimizer_type: str = "weight",
+        min_weight: float = None,
+        max_weight: float = None,
+        combined: bool = False
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Run market optimization for a specific iteration."""
-
-        combined_stock.to_csv(f"{output_dir}/combined_stock_{expansion_day}.csv", index=False)
+        
+        # Use provided weight constraints or fall back to market config
+        effective_min_weight = min_weight if min_weight is not None else self.market_config.min_weight
+        effective_max_weight = max_weight if max_weight is not None else self.market_config.max_weight
+        if combined:
+            combined_stock.to_csv(f"{output_dir}/combined_stock_adjusted_priority_{expansion_day}.csv", index=False)
+        else:
+            combined_stock.to_csv(f"{output_dir}/age_expansion_stock_adjusted_priority_{expansion_day}.csv", index=False)
 
         combined_stock = combined_stock.drop_duplicates(subset=['farm', 'house', 'date'])
+        combined_stock = self.optimizer.data_loader.adjust_priority_column(combined_stock, feed_price, input_file_path_price)
 
 
         # Run market optimization
@@ -1886,12 +1996,17 @@ class PoultryHarvestOptimizationService:
             max_tolerance=self.market_config.max_tolerance,
             harvest_type='Market',
             max_pct_per_house=self.market_config.max_pct_per_house,
-            min_weight=self.market_config.min_weight,
-            max_weight=self.market_config.max_weight,
-            valid_days=valid_days
+            min_weight=effective_min_weight,
+            max_weight=effective_max_weight,
+            valid_days=valid_days,
+            optimizer_type=optimizer_type,
+            adjust_priority=self.optimizer.data_loader.adjust_priority_column,
+            feed_price=feed_price,
+            input_file_path_price=input_file_path_price
+
         )
 
-        best_date, best_harvest_df, best_updated_df, _ = self.optimizer.get_best_net_meat_plan(results_by_start_day)
+        best_date, best_harvest_df, best_updated_df, _ = self.optimizer.get_best_net_meat_plan(results_by_start_day,optimizer_type=optimizer_type)
 
 
         

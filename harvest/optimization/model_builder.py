@@ -3,7 +3,7 @@ Model builder for the harvest optimization problem.
 """
 
 import pandas as pd
-from pulp import LpProblem, LpVariable, LpMaximize, lpSum, LpBinary, LpContinuous, PULP_CBC_CMD
+from pulp import LpProblem, LpVariable, LpMaximize, LpMinimize, lpSum, LpBinary, LpContinuous, PULP_CBC_CMD
 from typing import Dict, List, Tuple, Any
 import logging
 from datetime import datetime
@@ -132,26 +132,8 @@ class OptimizationModelBuilder:
                     cat=LpContinuous
                 )
             
-            # Objective: maximize metric with fallbacks: profit_per_bird -> avg_weight -> 1
-            if 'profit_per_bird' in df.columns:
-                objective_metric = df['profit_per_bird'].copy()
-            else:
-                objective_metric = None
-
-            if objective_metric is None or objective_metric.isna().all():
-                if 'avg_weight' in df.columns:
-                    objective_metric = df['avg_weight'].copy()
-                else:
-                    objective_metric = pd.Series(1.0, index=df.index)
-            else:
-                if 'avg_weight' in df.columns:
-                    objective_metric = objective_metric.fillna(df['avg_weight'])
-                objective_metric = objective_metric.fillna(1.0)
-
-            prob += lpSum([
-                harvest_vars[i] * objective_metric.loc[i]
-                for i in valid_indices
-            ])
+            # Objective: maximize total net meat
+            prob += lpSum([harvest_vars[i] * df.loc[i, 'avg_weight'] for i in valid_indices])
             
             # Capacity constraints (with optional bypass)
             total_harvest = lpSum([harvest_vars[i] for i in valid_indices])
@@ -159,15 +141,6 @@ class OptimizationModelBuilder:
             prob += total_harvest <= capacity_limit
             if adjusted_min_stock > 0:
                 prob += total_harvest >= adjusted_min_stock
-            
-            # Priority constraint: ensure minimum priority houses are always selected
-            # Find minimum priority value (highest priority)
-            min_priority = df['priority'].min() if not df.empty else 1
-            min_priority_indices = df[df['priority'] == min_priority].index.tolist()
-            
-            # Add constraint: at least one minimum priority house must be harvested
-            if min_priority_indices:
-                prob += lpSum([harvest_vars[i] for i in min_priority_indices]) >= 1
             
             # Solve to check feasibility under current tolerance
             status = prob.solve(PULP_CBC_CMD(msg=False))
@@ -193,39 +166,10 @@ class OptimizationModelBuilder:
                     upBound=max_harvest,
                     cat=LpContinuous
                 )
-            # Objective: maximize metric with fallbacks: profit_per_bird -> avg_weight -> 1
-            if 'profit_per_bird' in df.columns:
-                objective_metric = df['profit_per_bird'].copy()
-            else:
-                objective_metric = None
-
-            if objective_metric is None or objective_metric.isna().all():
-                if 'avg_weight' in df.columns:
-                    objective_metric = df['avg_weight'].copy()
-                else:
-                    objective_metric = pd.Series(1.0, index=df.index)
-            else:
-                if 'avg_weight' in df.columns:
-                    objective_metric = objective_metric.fillna(df['avg_weight'])
-                objective_metric = objective_metric.fillna(1.0)
-
-            prob += lpSum([
-                harvest_vars[i] * objective_metric.loc[i]
-                for i in valid_indices
-            ])
-            
-            # Capacity constraints
+            prob += lpSum([df.loc[i, 'avg_weight'] for i in valid_indices])
             total_harvest = lpSum([harvest_vars[i] for i in valid_indices])
             capacity_limit = max_total_stock + 20000 if bypass_capacity == 1 else max_total_stock
             prob += total_harvest <= capacity_limit
-            
-            # Priority constraint: ensure minimum priority houses are always selected
-            min_priority = df['priority'].min() if not df.empty else 1
-            min_priority_indices = df[df['priority'] == min_priority].index.tolist()
-            
-            # Add constraint: at least one minimum priority house must be harvested
-            if min_priority_indices:
-                prob += lpSum([harvest_vars[i] for i in min_priority_indices]) >= 1
             status = prob.solve(PULP_CBC_CMD(msg=False))
             if status == 1:
                 feasible_prob = prob
@@ -240,6 +184,110 @@ class OptimizationModelBuilder:
         self.data = df
         
         return feasible_prob
+    
+    def build_profit_market_model(
+        self,
+        df_day: pd.DataFrame,
+        max_total_stock: int = 100000,
+        min_total_stock: int = 99900,
+        max_pct_per_house: float = 1.0,
+        leftover_threshold: int = 2000
+    ) -> LpProblem:
+        """
+        Build optimization model for market harvest with profit maximization focus.
+        LP objective: minimize sum(cost_i * x_i)
+        s.t. sum(x_i) = H, 0 <= x_i <= expected_stock_i
+        Priority: lower 'priority' -> lower 'profit_loss' -> higher 'avg_weight'
+        After solving, harvest any leftover <= leftover_threshold entirely, allowing overshoot only from this rule.
+        
+        Args:
+            df_day: DataFrame for a specific day
+            max_total_stock: Maximum total stock to harvest (target harvest amount H)
+            min_total_stock: Minimum total stock to harvest (not used in new logic)
+            max_pct_per_house: Maximum percentage per house (not used in new logic)
+            leftover_threshold: Threshold for harvesting small leftovers entirely
+            
+        Returns:
+            PuLP optimization problem with solved variables
+        """
+        # Filter for ready market rows
+        df = df_day.copy()
+        df = df[df['ready_Market'] == 1].reset_index(drop=True)
+        
+        if df.empty:
+            logger.warning("No eligible rows for profit market harvest")
+            return None
+        
+        # Check required columns
+        need = {"farm", "house", "expected_stock", "priority", "profit_loss", "avg_weight"}
+        miss = need - set(df.columns)
+        if miss:
+            logger.error(f"Missing required columns for profit harvest: {sorted(miss)}")
+            return None
+
+        H = int(max_total_stock)
+        total_available = int(df["expected_stock"].sum())
+        H = max(0, min(H, total_available))
+
+        # Costs from stable sort by the required priority keys
+        order_df = df.sort_values(["priority", "profit_loss", "avg_weight"], ascending=[True, True, False])
+        order = order_df.index.to_list()
+        cost = pd.Series({i: k + 1.0 for k, i in enumerate(order)}, dtype=float)
+
+        # Solve LP; fallback to greedy in the same order if PuLP is unavailable
+        harvest_vars = {}
+        prob = None
+        
+        try:
+            import pulp
+            x = {i: pulp.LpVariable(f"x_{i}", lowBound=0, upBound=float(df.at[i, "expected_stock"])) for i in df.index}
+            prob = pulp.LpProblem("HarvestLP", pulp.LpMinimize)
+            prob += pulp.lpSum(cost[i] * x[i] for i in df.index)
+            prob += pulp.lpSum(x[i] for i in df.index) == float(H)
+            prob.solve(pulp.PULP_CBC_CMD(msg=False))
+            df["harvest_stock"] = [
+                int(round(max(0.0, min(df.at[i, "expected_stock"], (pulp.value(x[i]) or 0.0))))) for i in df.index
+            ]
+            # Store variables for compatibility with solution processor
+            harvest_vars = x
+            logger.info(f"Profit harvest LP solved optimally")
+        except Exception as e:
+            logger.warning(f"LP solver failed ({e}), using greedy fallback")
+            df["harvest_stock"] = 0
+            remaining = H
+            for i in order:
+                if remaining <= 0:
+                    break
+                take = int(min(df.at[i, "expected_stock"], remaining))
+                df.at[i, "harvest_stock"] = take
+                remaining -= take
+            
+            # Create variables with greedy values for solution processor compatibility
+            for i in df.index:
+                harvest_vars[i] = LpVariable(f"x_{i}", lowBound=0, upBound=float(df.at[i, "expected_stock"]))
+                harvest_vars[i].varValue = float(df.at[i, "harvest_stock"])
+
+        # Base available
+        df["available_stock"] = df["expected_stock"] - df["harvest_stock"]
+
+        # Only overshoot via leftover rule
+        mask_small_leftover = (df["available_stock"] > 0) & (df["available_stock"] <= leftover_threshold)
+        df.loc[mask_small_leftover, "harvest_stock"] += df.loc[mask_small_leftover, "available_stock"]
+        df.loc[mask_small_leftover, "available_stock"] = 0
+        
+        # Update variable values to reflect leftover harvesting for solution processor compatibility
+        for i in df.index:
+            if i in harvest_vars:
+                harvest_vars[i].varValue = float(df.at[i, "harvest_stock"])
+
+        logger.info(f"Profit harvest completed with total harvest: {df['harvest_stock'].sum()}")
+        
+        # Store for later use by solution processor
+        self.problem = prob
+        self.variables = harvest_vars
+        self.data = df
+        
+        return prob
     
     def get_model_variables(self) -> Dict[str, Any]:
         """Get the model variables for solution processing."""

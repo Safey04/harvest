@@ -155,6 +155,7 @@ class MarketConfig:
     max_pct_per_house: float
     tolerance_step: int
     max_tolerance: int
+    optimizer_type: str = "weight"  # Options: "weight", "profit"
 
 
 @dataclass
