@@ -113,10 +113,8 @@ class SolutionProcessor:
                     'net_meat': harvested * row['avg_weight'],
                     'harvest_type': harvest_type,
                     'profit_per_bird': row['profit_per_bird'],
+                    'priority': row['priority']
                 }
-                # Include priority if available in the source data
-                if 'priority' in row.index:
-                    harvest_entry['priority'] = row['priority']
                 results.append(harvest_entry)
         
         if results:
